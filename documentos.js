@@ -252,10 +252,12 @@ async function descargar() {
   b.disabled = true; aviso("Generando PDF…");
   try {
     await cargarLibPDF();
+    // Sin windowWidth fijo: html2pdf centra el documento en la ventana real, y si html2canvas
+    // la simula con otro ancho, el PDF sale corrido a la izquierda y cortado.
     await window.html2pdf().set({
       margin: [8, 8, 8, 8], filename: actual.archivo,
       image: { type: "jpeg", quality: 0.97 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 800 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", scrollX: 0, scrollY: 0 },
       jsPDF: { unit: "mm", format: "letter", orientation: "portrait" },
       pagebreak: { mode: ["css", "legacy"], avoid: ["tr", ".ne-foot", ".ne-firmas", ".rp-kpis", ".rp-head"] }
     }).from(el).save();
