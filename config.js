@@ -14,6 +14,6 @@ window.CONFIG = {
     RIF: "J-505733605",
     DIRECCION: "Calle de Acceso, local Centro Empresarial Caribe Nro. Galpón G-10, Sector Asentamiento Campesino Morita 1, Parcela 10 Lota A-1, Turmero Edo. Aragua, Zona Postal 2115",
     TELEFONO: "0416-642.76.80",
-    LOGO: ""
+    LOGO: "icons/logo.png"
   }
 };

@@ -18,7 +18,8 @@ const MON = m => m === "BS" ? "Bs." : "USD";
 /* ---------------- Encabezado de empresa (compartido) ---------------- */
 function logoHTML() {
   const e = empresa();
-  if (e.LOGO) return `<img class="dc-logo" src="${esc(e.LOGO)}" alt="${esc(e.MARCA || e.NOMBRE)}">`;
+  // Ruta absoluta: la impresión copia el documento a otra página y la imagen debe seguir encontrándose.
+  if (e.LOGO) return `<img class="dc-logo" src="${esc(new URL(e.LOGO, location.href).href)}" alt="${esc(e.MARCA || e.NOMBRE)}">`;
   const [a, ...b] = String(e.MARCA || "Logo").split(" ");
   return `<div class="dc-logo dc-txtlogo"><span>${esc(a)}</span><small>${esc(b.join(" "))}</small></div>`;
 }
@@ -28,7 +29,7 @@ const CSS_NOTA = `
 .ne{width:750px;background:#fff;color:#111;font:12px/1.35 Arial,Helvetica,sans-serif;padding:6px 4px;box-sizing:border-box}
 .ne *{box-sizing:border-box}
 .ne-head{display:grid;grid-template-columns:200px 1fr;gap:14px;align-items:center}
-.ne .dc-logo{width:190px;height:130px;object-fit:contain}
+.ne .dc-logo{width:190px;height:150px;object-fit:contain}
 .ne .dc-txtlogo{display:grid;place-content:center;text-align:center;border:2px solid #3b2314;border-radius:50% 50% 12px 12px;color:#3b2314}
 .ne .dc-txtlogo span{font:700 46px/1 Georgia,"Times New Roman",serif;letter-spacing:-1px}
 .ne .dc-txtlogo small{font:italic 20px/1.1 Georgia,serif}
@@ -141,7 +142,7 @@ const CSS_REP = `
 .rp{width:750px;background:#fff;color:#111;font:11.5px/1.4 Arial,Helvetica,sans-serif;padding:4px}
 .rp *{box-sizing:border-box}
 .rp-head{display:grid;grid-template-columns:120px 1fr auto;gap:14px;align-items:center;border-bottom:3px solid #10305a;padding-bottom:10px}
-.rp .dc-logo{width:110px;height:76px;object-fit:contain}
+.rp .dc-logo{width:110px;height:100px;object-fit:contain}
 .rp .dc-txtlogo{display:grid;place-content:center;text-align:center;border:2px solid #3b2314;border-radius:50% 50% 10px 10px;color:#3b2314}
 .rp .dc-txtlogo span{font:700 28px/1 Georgia,serif}.rp .dc-txtlogo small{font:italic 13px Georgia,serif}
 .rp-emp h1{font:900 17px/1.15 Georgia,serif;margin:0}
