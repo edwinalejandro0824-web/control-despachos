@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Control de Despachos</title>
+<meta name="description" content="Registro de despachos, cobranzas y comisiones de vendedores.">
+<meta name="theme-color" content="#10305a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Despachos">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+
+<!-- ===================== INICIO DE SESIÓN ===================== -->
+<div class="login" id="vLogin" hidden>
+  <form class="box" id="formLogin" novalidate>
+    <div class="brand"><div class="mark">CD</div><h1>Control de Despachos y Cobranzas<small>Inicie sesión para continuar</small></h1></div>
+    <label class="f">Correo electrónico<input type="email" id="lCorreo" autocomplete="username" required></label>
+    <label class="f">Contraseña<input type="password" id="lClave" autocomplete="current-password" required></label>
+    <label class="f" id="lNombreWrap" hidden>Nombre y apellido<input id="lNombre" autocomplete="name"></label>
+    <div id="lMsg" class="msg" hidden></div>
+    <button class="btn primary" type="submit" id="lBtn">Iniciar sesión</button>
+    <button class="btn" type="button" id="lToggle">Crear una cuenta nueva</button>
+    <button class="btn small" type="button" id="lReset" style="justify-self:start;border:0;color:var(--link)">Olvidé mi contraseña</button>
+  </form>
+</div>
+
+<div class="login" id="vPend" hidden>
+  <div class="box">
+    <div class="brand"><div class="mark">CD</div><h1>Cuenta pendiente de aprobación<small id="pendCorreo"></small></h1></div>
+    <p class="muted" style="margin:0">Su cuenta fue creada. Un administrador debe activarla y asignarle un rol antes de que pueda usar el sistema.</p>
+    <button class="btn" type="button" id="pendSalir">Cerrar sesión</button>
+  </div>
+</div>
+
+<!-- ===================== APLICACIÓN ===================== -->
+<div id="vApp" hidden>
+  <div class="band">
+    <div class="wrap">
+      <div class="brand"><div class="mark" aria-hidden="true">CD</div><h1>Control de Despachos y Cobranzas<small>Notas de entrega, facturas, cobros y comisiones</small></h1></div>
+      <div class="who"><span class="dot" id="dot"></span><span id="whoName"></span><span class="role" id="whoRole"></span><button type="button" id="btnSalir">Cerrar sesión</button></div>
+      <nav role="tablist" aria-label="Secciones" id="nav"></nav>
+    </div>
+  </div>
+
+  <div class="alert" id="alerta" hidden role="alert">
+    <div class="wrap">
+      <strong>ALERTA DE COBRANZA</strong>
+      <span class="txt" id="alertaTxt"></span>
+      <button class="btn small" type="button" id="alertaVer">Ver clientes vencidos</button>
+    </div>
+  </div>
+
+  <div class="period" id="periodBar">
+    <div class="wrap">
+      <div class="seg" role="group" aria-label="Tipo de reporte">
+        <button type="button" data-ptype="dia" aria-pressed="false">Diario</button>
+        <button type="button" data-ptype="semana" aria-pressed="false">Semanal</button>
+        <button type="button" data-ptype="mes" aria-pressed="true">Mensual</button>
+      </div>
+      <button class="iconbtn" type="button" id="pPrev" aria-label="Período anterior">‹</button>
+      <input type="date" id="pFecha" style="width:auto" aria-label="Fecha del período">
+      <button class="iconbtn" type="button" id="pNext" aria-label="Período siguiente">›</button>
+      <span class="plabel" id="pLabel"></span>
+      <span class="legend"><span><b class="cur USD">USD</b> = dólares estadounidenses</span><span><b class="cur BS">Bs. BCV</b> = bolívares a tasa BCV</span></span>
+    </div>
+  </div>
+
+  <main class="wrap">
+    <div id="banner" class="msg info" hidden></div>
+
+    <!-- REPORTES -->
+    <section role="tabpanel" id="p-reportes" hidden>
+      <div id="kpis"></div>
+      <div class="grid2">
+        <div class="card"><h3 id="chartTitle">Ventas despachadas por día</h3><div id="chart"></div></div>
+        <div class="card"><h3>Condición de pago</h3><div class="tbl" id="porCond"></div></div>
+      </div>
+      <div class="grid2">
+        <div class="card"><h3>Por responsable</h3><div class="tbl" id="porResp"></div></div>
+        <div class="card"><h3>Por UMB</h3><div class="tbl" id="porUmb"></div></div>
+      </div>
+      <div class="card"><h3>Por cliente</h3><div class="tbl" id="porCli"></div></div>
+    </section>
+
+    <!-- REGISTRO -->
+    <section role="tabpanel" id="p-registro" hidden>
+      <div class="filters">
+        <label class="f grow">Buscar por cliente, N° de factura / entrega o referencia<input id="q" type="search" placeholder="Ej.: Sambil, N/E004260, 7660"></label>
+        <label class="f">Status<select id="fStatus"><option value="">Todos</option></select></label>
+        <label class="f">Responsable<select id="fResp"><option value="">Todos</option></select></label>
+        <label class="f">Moneda<select id="fMon"><option value="">Todas</option><option value="USD">USD</option><option value="BS">Bs. BCV</option></select></label>
+        <button class="btn" id="exportBtn" type="button">Descargar período (CSV)</button>
+      </div>
+      <div class="tbl" id="tablaReg"></div>
+    </section>
+
+    <!-- NUEVO -->
+    <section role="tabpanel" id="p-nuevo" hidden>
+      <form class="card form" id="formNuevo" novalidate>
+        <div>
+          <h2>Registrar nuevo despacho</h2>
+          <p class="lead">Complete los datos de la nota de entrega o factura. Los campos marcados con <span class="red">*</span> son obligatorios.</p>
+        </div>
+        <fieldset>
+          <legend>Datos del despacho</legend>
+          <div class="row">
+            <label class="f">Fecha de despacho <span class="req">*</span><input type="date" id="nFecha"></label>
+            <label class="f">Cliente <span class="req">*</span><input id="nCliente" list="listaClientes" autocomplete="off" placeholder="Escriba o seleccione"></label>
+            <label class="f">N° de Factura / Entrega <span class="req">*</span><input id="nNota" autocomplete="off"></label>
+            <label class="f" id="nRespWrap">Responsable <span class="req">*</span><select id="nResp"></select></label>
+            <label class="f" id="nVendWrap" hidden>Vendedor <span class="req">*</span><select id="nVend"></select></label>
+            <label class="f">Moneda <span class="req">*</span><select id="nMoneda"><option value="USD">USD — Dólares</option><option value="BS">Bs. — Bolívares (tasa BCV)</option></select></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Condición de pago <span class="red">*</span></legend>
+          <div class="radios">
+            <label class="radio"><input type="radio" name="cond" value="CONTADO" id="cContado"><b>De contado</b><span>El cliente paga el mismo día del despacho.</span></label>
+            <label class="radio"><input type="radio" name="cond" value="CREDITO" id="cCredito"><b>A crédito (7 días)</b><span>El pago vence 7 días después de la fecha de despacho.</span></label>
+          </div>
+          <p class="muted" id="nVence" style="margin:10px 0 0;font-size:.85rem"></p>
+        </fieldset>
+        <fieldset>
+          <legend>Productos</legend>
+          <div class="lines" id="lines"></div>
+          <button type="button" class="btn small" id="addLine" style="margin-top:12px">+ Agregar producto</button>
+        </fieldset>
+        <fieldset id="nPagoSet">
+          <legend>Pago y status</legend>
+          <div class="row">
+            <label class="f">Status <span class="req">*</span><select id="nStatus"></select></label>
+            <label class="f">Fecha de pago<input type="date" id="nFPago"></label>
+            <label class="f">Nro. de referencia<input id="nRef" autocomplete="off" placeholder="Del comprobante bancario"></label>
+          </div>
+          <p class="muted" style="margin:10px 0 0;font-size:.8rem">Si el cliente ya pagó, indique la fecha de pago y el número de referencia: el status pasará a VALIDADO.</p>
+        </fieldset>
+        <label class="f">Observación<input id="nObs" autocomplete="off"></label>
+        <div id="nMsg" class="msg" hidden></div>
+        <div class="total-row">
+          <div><span class="muted">Monto total de la nota</span>&nbsp; <span class="num" id="nTotal">USD 0,00</span></div>
+          <button class="btn primary" type="submit" id="nSave">Guardar despacho</button>
+        </div>
+      </form>
+      <datalist id="listaClientes"></datalist>
+    </section>
+
+    <!-- COBRANZA -->
+    <section role="tabpanel" id="p-cobranza" hidden>
+      <div>
+        <h2>Cuentas por cobrar</h2>
+        <p class="lead">Todos los despachos con status DESPACHADO, de cualquier fecha, agrupados por cliente. En rojo: pagos vencidos. Contado vence el mismo día; crédito vence a los 7 días.</p>
+      </div>
+      <div class="kgrid" id="cobroKpis"></div>
+      <div class="tbl" id="tablaCobro"></div>
+    </section>
+
+    <!-- COMISIONES (administrador) -->
+    <section role="tabpanel" id="p-comisiones" hidden>
+      <div>
+        <h2>Comisiones de vendedores</h2>
+        <p class="lead">La comisión del mes es el <b id="cPct"></b> de las ventas del vendedor <b>cobradas entre el primer y el último día del mes</b> (status VALIDADO con fecha de pago en ese mes). Se paga el mes siguiente, en bolívares, a la tasa BCV del día 29. Al registrar el pago, esas ventas pasan a status COMISIÓN y no se vuelven a contar.</p>
+      </div>
+      <div class="card filters">
+        <label class="f">Mes cobrado<input type="month" id="cMes"></label>
+        <label class="f">Tasa BCV del <span id="cFechaTasaTxt"></span> (Bs. por USD) <span class="req">*</span><input type="number" step="0.0001" min="0" id="cTasa" inputmode="decimal"></label>
+        <button class="btn" type="button" id="cGuardarTasa">Guardar tasa</button>
+        <button class="btn" type="button" id="cConsultarTasa">Consultar tasa BCV de hoy</button>
+        <span class="muted" id="cTasaInfo" style="font-size:.8rem;flex:1 1 220px"></span>
+      </div>
+      <div id="cAvisos"></div>
+      <div id="cVendedores" style="display:grid;gap:20px"></div>
+      <div class="card"><h3>Comisiones pagadas</h3><div class="tbl" id="cPagadas"></div></div>
+    </section>
+
+    <!-- MIS VENTAS (vendedor) -->
+    <section role="tabpanel" id="p-misventas" hidden>
+      <div class="filters">
+        <div style="flex:1 1 260px"><h2 id="mvTitulo">Mis ventas</h2><p class="lead">Su comisión se calcula sobre lo que usted cobró en el mes y se paga el mes siguiente.</p></div>
+        <label class="f">Mes<input type="month" id="mvMes"></label>
+      </div>
+      <div class="kgrid" id="mvKpis"></div>
+      <div class="card"><h3>Cálculo de la comisión del mes</h3><div id="mvCalc"></div></div>
+      <div class="card"><h3>Ventas cobradas en el mes (cuentan para la comisión)</h3><div class="tbl" id="mvCobradas"></div></div>
+      <div class="card"><h3>Ventas despachadas en el mes</h3><div class="tbl" id="mvVentas"></div></div>
+      <div class="card"><h3>Pendientes por cobrar (todavía no generan comisión)</h3><div class="tbl" id="mvPend"></div></div>
+      <div class="card"><h3>Historial de comisiones pagadas</h3><div class="tbl" id="mvHist"></div></div>
+    </section>
+
+    <!-- ADMINISTRACIÓN -->
+    <section role="tabpanel" id="p-admin" hidden>
+      <div class="grid2">
+        <div class="card">
+          <h3>Usuarios</h3>
+          <p class="lead" style="margin:0 0 10px">Cada persona crea su cuenta desde la pantalla de inicio. Aquí se activa, se le asigna el rol y, si es vendedor, a qué vendedor corresponde.</p>
+          <div class="tbl" id="aUsuarios"></div>
+        </div>
+        <div class="card">
+          <h3>Vendedores</h3>
+          <form class="filters" id="formVend" style="margin-bottom:10px"><label class="f grow">Nombre del vendedor<input id="aVendNombre" autocomplete="off"></label><button class="btn" type="submit">Agregar vendedor</button></form>
+          <div class="tbl" id="aVendedores"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Tasas BCV registradas</h3>
+        <form class="filters" id="formTasa" style="margin-bottom:10px">
+          <label class="f">Fecha<input type="date" id="aTasaFecha"></label>
+          <label class="f">Tasa (Bs. por USD)<input type="number" step="0.0001" min="0" id="aTasaValor"></label>
+          <button class="btn" type="submit">Guardar tasa</button>
+        </form>
+        <div class="tbl" id="aTasas"></div>
+      </div>
+      <div class="card">
+        <h3>Historial de cambios en la base de datos</h3>
+        <div class="filters" style="margin-bottom:10px">
+          <label class="f">Tabla<select id="aHistTabla"><option value="">Todas</option><option>despachos</option><option>comisiones</option><option>tasas_bcv</option><option>vendedores</option><option>perfiles</option></select></label>
+          <button class="btn" type="button" id="aHistCargar">Actualizar</button>
+        </div>
+        <div class="tbl" id="aHist"></div>
+      </div>
+      <div class="card"><h3>Actividad de usuarios</h3><div class="tbl" id="aEventos"></div></div>
+    </section>
+  </main>
+</div>
+
+<!-- registrar pago -->
+<dialog id="dlgPago">
+  <form method="dialog" id="formPago">
+    <div class="dh"><h2 id="pagoTitulo">Registrar pago</h2><p class="lead" style="margin-top:2px">Seleccione las líneas que cubre este pago.</p></div>
+    <div class="db">
+      <div class="checks" id="pagoLineas"></div>
+      <div class="row">
+        <label class="f">Fecha de pago <span class="req">*</span><input type="date" id="pgFecha"></label>
+        <label class="f">Nro. de referencia <span class="req">*</span><input id="pgRef" autocomplete="off" placeholder="Del comprobante bancario"></label>
+      </div>
+      <div id="pgMsg" class="msg" hidden></div>
+    </div>
+    <div class="df">
+      <span class="num" id="pgTotal" style="margin-right:auto;align-self:center"></span>
+      <button class="btn" value="cancel" formnovalidate>Cancelar</button>
+      <button class="btn primary" id="pgSave" value="ok">Registrar pago</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- editar -->
+<dialog id="dlgEdit">
+  <form method="dialog" id="formEdit">
+    <div class="dh"><h2>Editar registro</h2><p class="lead" style="margin-top:2px" id="edSub"></p></div>
+    <div class="db">
+      <div class="row">
+        <label class="f">Fecha de despacho<input type="date" id="eFecha"></label>
+        <label class="f">Cliente<input id="eCliente" list="listaClientes" autocomplete="off"></label>
+        <label class="f">Cantidad<input id="eCant" type="number" step="any" min="0"></label>
+        <label class="f">UMB<select id="eUmb"></select></label>
+        <label class="f">Precio<input id="ePrecio" type="number" step="0.01" min="0"></label>
+        <label class="f">Moneda<select id="eMon"><option value="USD">USD — Dólares</option><option value="BS">Bs. — Bolívares (BCV)</option></select></label>
+        <label class="f">Condición de pago<select id="eCond"><option value="CONTADO">De contado</option><option value="CREDITO">A crédito (7 días)</option></select></label>
+        <label class="f">Status<select id="eStatus"></select></label>
+        <label class="f">Fecha de pago<input type="date" id="eFPago"></label>
+        <label class="f">Nro. de referencia<input id="eRef" autocomplete="off"></label>
+        <label class="f">N° de Factura / Entrega<input id="eNota" autocomplete="off"></label>
+        <label class="f">Responsable<select id="eResp"></select></label>
+        <label class="f">Vendedor<select id="eVend"></select></label>
+        <label class="f" style="grid-column:1/-1">Observación<input id="eObs" autocomplete="off"></label>
+      </div>
+      <div id="edMsg" class="msg" hidden></div>
+    </div>
+    <div class="df">
+      <span class="num" id="edTotal" style="margin-right:auto;align-self:center"></span>
+      <button class="btn" value="cancel" formnovalidate>Cancelar</button>
+      <button class="btn primary" id="edSave" value="ok">Guardar cambios</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- pagar comisión -->
+<dialog id="dlgCom">
+  <form method="dialog" id="formCom">
+    <div class="dh"><h2 id="comTitulo">Registrar pago de comisión</h2><p class="lead" style="margin-top:2px">Revise el cálculo. Al confirmar, las ventas incluidas pasan a status COMISIÓN.</p></div>
+    <div class="db">
+      <div id="comCalc"></div>
+      <label class="f">Referencia del pago al vendedor (opcional)<input id="comRef" autocomplete="off" placeholder="Nro. de transferencia o pago móvil"></label>
+      <div id="comMsg" class="msg" hidden></div>
+    </div>
+    <div class="df">
+      <button class="btn" value="cancel" formnovalidate>Cancelar</button>
+      <button class="btn primary" id="comSave" value="ok">Confirmar pago de comisión</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- anular comisión -->
+<dialog id="dlgAnular">
+  <form method="dialog" id="formAnular">
+    <div class="dh"><h2>Anular pago de comisión</h2><p class="lead" style="margin-top:2px" id="anSub"></p></div>
+    <div class="db">
+      <p style="margin:0">Las ventas de este pago volverán a status VALIDADO y podrán incluirse en un nuevo cálculo. El registro de la anulación queda en el historial.</p>
+      <label class="f">Motivo de la anulación <span class="req">*</span><input id="anMotivo" autocomplete="off"></label>
+      <div id="anMsg" class="msg" hidden></div>
+    </div>
+    <div class="df">
+      <button class="btn" value="cancel" formnovalidate>Cancelar</button>
+      <button class="btn primary" id="anSave" value="ok" style="background:#b8232b;border-color:#b8232b">Anular pago</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+</body>
+</html>
