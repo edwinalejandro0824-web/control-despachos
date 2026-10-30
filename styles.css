@@ -166,6 +166,14 @@ dialog .df { padding: 12px 20px 16px; display: flex; gap: 10px; justify-content:
 .checks label:hover { background: var(--sunk) }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: .88rem; z-index: 20; max-width: calc(100vw - 32px) }
 pre.json { margin: 0; font: .72rem/1.4 var(--f-num); white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow: auto; color: var(--muted) }
+/* vista previa de documentos (nota de entrega y reportes en PDF) */
+dialog.doc-dlg { width: min(880px, calc(100vw - 16px)); height: calc(100vh - 24px); max-height: none }
+dialog.doc-dlg[open] { display: flex; flex-direction: column }
+.doc-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line) }
+.doc-acc { display: flex; gap: 8px; flex-wrap: wrap }
+.doc-msg { padding: 8px 14px; font-size: .85rem; background: var(--warn-soft); color: var(--warn) }
+.doc-vista { flex: 1; overflow: auto; background: #dfe4ea; padding: 12px }
+.doc-hoja { width: 760px; margin: 0 auto; background: #fff; box-shadow: 0 2px 14px rgb(0 0 0 / .18); transform-origin: top left; padding: 5px }
 @media (max-width: 600px) {
   .line { grid-template-columns: 1fr 1fr }
   .line .monto { text-align: left }

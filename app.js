@@ -44,7 +44,7 @@ const fechaTasa = ym => { const fin = monthFin(ym); return +fin.slice(8) >= DIA_
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 const S = {
   user: null, perfil: null, admin: false,
-  docs: [], byId: new Map(), vendedores: [], tasas: new Map(), comisiones: [], perfiles: [],
+  docs: [], byId: new Map(), vendedores: [], tasas: new Map(), comisiones: [], perfiles: [], clientes: new Map(), productos: new Map(),
   loaded: false, tab: null, ptype: "mes", anchor: today(), channel: null
 };
 
@@ -204,13 +204,15 @@ async function fetchAll(table, order) {
 async function cargarTodo() {
   $("#dot").className = "dot";
   try {
-    const [docs, vend, tasas, coms, perfs] = await Promise.all([
+    const [docs, vend, tasas, coms, perfs, clis, prods] = await Promise.all([
       fetchAll("despachos", "fecha"), fetchAll("vendedores", "nombre"), fetchAll("tasas_bcv", "fecha"),
-      fetchAll("comisiones", "mes"), S.admin ? fetchAll("perfiles", "nombre") : Promise.resolve([])
+      fetchAll("comisiones", "mes"), S.admin ? fetchAll("perfiles", "nombre") : Promise.resolve([]),
+      fetchAll("clientes", "nombre"), fetchAll("productos", "umb")
     ]);
     S.docs = docs.map(d => ({ ...d, cantidad: num(d.cantidad), precio: num(d.precio), monto: num(d.monto) }));
     S.byId = new Map(S.docs.map(d => [d.id, d]));
     S.vendedores = vend; S.tasas = new Map(tasas.map(t => [t.fecha, num(t.tasa)])); S.comisiones = coms; S.perfiles = perfs;
+    S.clientes = new Map(clis.map(c => [c.clave, c])); S.productos = new Map(prods.map(p => [p.umb, p.descripcion]));
     S.loaded = true; $("#dot").className = "dot on"; $("#banner").hidden = true;
     fillSelects(); render();
   } catch (err) {
@@ -357,7 +359,7 @@ function renderRegistro() {
   const rows = base.filter(d => (!st || d.status === st) && (!rp || d.responsable === rp) && (!mo || mon(d) === mo) &&
     (!q || norm(d.cliente).includes(q) || norm(d.nota).includes(q) || norm(d.referencia).includes(q))).sort((a, b) => a.fecha.localeCompare(b.fecha) || String(a.nota).localeCompare(String(b.nota)));
   $("#tablaReg").innerHTML = tablaDespachos(rows, d =>
-    `${d.status === "DESPACHADO" ? `<button class="btn small" data-pay="${d.id}">Cobrar</button> ` : ""}<button class="btn small" data-edit="${d.id}">Editar</button> <button class="btn small danger" data-del="${d.id}">Eliminar</button>`,
+    `<button class="btn small" data-nota="${d.id}" title="Ver o descargar la nota de entrega">Nota</button> ${d.status === "DESPACHADO" ? `<button class="btn small" data-pay="${d.id}">Cobrar</button> ` : ""}<button class="btn small" data-edit="${d.id}">Editar</button> <button class="btn small danger" data-del="${d.id}">Eliminar</button>`,
     base.length ? "Ningún registro coincide con los filtros." : "No hay despachos registrados en este período.");
 }
 function renderCobranza() {
@@ -534,6 +536,9 @@ function renderAdmin() {
   const tasas = [...S.tasas].sort((a, b) => b[0].localeCompare(a[0]));
   $("#aTasas").innerHTML = tasas.length ? `<table><thead><tr><th>Fecha</th><th class="n">Bs. por USD</th></tr></thead><tbody>${tasas.map(([f, t]) => `<tr><td>${fdate(f)}</td><td class="n">${nf4.format(t)}</td></tr>`).join("")}</tbody></table>` : empty("Sin tasas registradas.");
   if (!$("#aTasaFecha").value) $("#aTasaFecha").value = today();
+  if (!$("#aProductos").contains(document.activeElement))
+    $("#aProductos").innerHTML = `<table><thead><tr><th>UMB</th><th>Descripción en la nota de entrega</th></tr></thead><tbody>
+    ${UMBS.map(u => `<tr><td><span class="code">${esc(u)}</span></td><td><input data-prod="${esc(u)}" value="${esc(S.productos.get(u) || u)}" aria-label="Descripción de ${esc(u)}"></td></tr>`).join("")}</tbody></table>`;
 }
 async function cargarHistorial() {
   let q = sb.from("historial").select("*").order("fecha", { ascending: false }).limit(300);
@@ -553,7 +558,7 @@ async function cargarEventos() {
   const { data, error } = await sb.from("eventos").select("*").order("fecha", { ascending: false }).limit(200);
   if (error) { $("#aEventos").innerHTML = empty("No se pudo cargar la actividad."); return; }
   const nom = id => S.perfiles.find(p => p.id === id)?.nombre || id;
-  const TXT = { inicio_sesion: "Inició sesión", cierre_sesion: "Cerró sesión", exportacion: "Descargó un reporte", comision_pagada: "Registró pago de comisión", comision_anulada: "Anuló pago de comisión", tasa_guardada: "Guardó tasa BCV" };
+  const TXT = { inicio_sesion: "Inició sesión", cierre_sesion: "Cerró sesión", exportacion: "Descargó un reporte", comision_pagada: "Registró pago de comisión", comision_anulada: "Anuló pago de comisión", tasa_guardada: "Guardó tasa BCV", nota_entrega: "Generó nota de entrega" };
   $("#aEventos").innerHTML = data.length ? `<table><thead><tr><th>Fecha y hora</th><th>Usuario</th><th>Actividad</th><th>Detalle</th></tr></thead><tbody>
     ${data.map(e => `<tr><td class="num" style="text-align:left">${fdt(e.fecha)}</td><td>${esc(nom(e.usuario))}</td><td>${TXT[e.tipo] || esc(e.tipo)}</td><td><pre class="json">${esc(e.detalle ? JSON.stringify(e.detalle) : "")}</pre></td></tr>`).join("")}</tbody></table>` : empty("Sin actividad registrada.");
 }
@@ -573,6 +578,12 @@ document.addEventListener("change", async e => {
   if (t.dataset.uvend !== undefined && t.matches("[data-uvend]")) upd("perfiles", t.dataset.uvend, { vendedor_id: t.value || null }, "Vendedor asociado.");
   if (t.dataset.uact) upd("perfiles", t.dataset.uact, { activo: t.checked }, t.checked ? "Usuario activado." : "Usuario desactivado.");
   if (t.dataset.vact) upd("vendedores", t.dataset.vact, { activo: t.checked }, "Vendedor actualizado.");
+  if (t.dataset.prod) {
+    const descripcion = t.value.trim().replace(/\s+/g, " ") || t.dataset.prod;
+    const { error } = await sb.from("productos").upsert({ umb: t.dataset.prod, descripcion });
+    if (error) return toast("No se pudo guardar: " + errTxt(error));
+    S.productos.set(t.dataset.prod, descripcion); toast(`${t.dataset.prod}: «${descripcion}» guardado.`);
+  }
 });
 
 /* ====================== Nuevo despacho ====================== */
@@ -583,7 +594,7 @@ function fillSelects() {
   $("#eVend").innerHTML = `<option value="">— Ninguno —</option>` + S.vendedores.map(v => `<option value="${v.id}">${esc(v.nombre)}</option>`).join("");
 }
 async function refreshFormLists() {
-  const clients = [...new Map(S.docs.map(d => [norm(d.cliente), d.cliente])).values()].sort((a, b) => a.localeCompare(b));
+  const clients = [...new Map([...S.docs.map(d => [norm(d.cliente), d.cliente]), ...[...S.clientes.values()].map(c => [c.clave, c.nombre])]).values()].sort((a, b) => a.localeCompare(b));
   const dl = clients.map(c => `<option value="${esc(c)}"></option>`).join("");
   if ($("#listaClientes").innerHTML !== dl) $("#listaClientes").innerHTML = dl;
   if (!notaTouched && S.loaded && S.tab === "nuevo") { const { data } = await sb.rpc("siguiente_nota"); if (data && !notaTouched) $("#nNota").value = data; }
@@ -660,14 +671,114 @@ $("#formNuevo").addEventListener("submit", async ev => {
   }
   if (!filas.length) return fail("Agregue al menos un producto.");
   $("#nSave").disabled = true;
-  const { error } = await sb.from("despachos").insert(filas);
+  const { data: creadas, error } = await sb.from("despachos").insert(filas).select("id");
   $("#nSave").disabled = false;
   if (error) return fail("No se pudo guardar: " + errTxt(error));
-  toast(`Despacho ${nota} registrado (${filas.length} ${filas.length === 1 ? "producto" : "productos"}).`);
-  $("#lines").innerHTML = ""; ["#nObs", "#nCliente", "#nRef", "#nFPago"].forEach(s => $(s).value = "");
+  await guardarCliente(cliente, { rif: $("#nRif").value, telefono: $("#nTel").value, direccion: $("#nDir").value });
+  toast(`Despacho ${filas[0].nota} registrado (${filas.length} ${filas.length === 1 ? "producto" : "productos"}).`);
+  $("#lines").innerHTML = ""; ["#nObs", "#nCliente", "#nRef", "#nFPago", "#nRif", "#nTel", "#nDir"].forEach(s => $(s).value = "");
   $$("input[name=cond]").forEach(r => r.checked = false);
   notaTouched = false; statusTouched = false; autoStatus(); updateVence(); addLine();
   await cargarTodo();
+  const ids = new Set((creadas || []).map(r => r.id)), nuevas = S.docs.filter(d => ids.has(d.id));
+  if (nuevas.length) abrirNota(nuevas, true);
+});
+
+/* ====================== Clientes ====================== */
+/** Guarda RIF, teléfono y dirección del cliente (solo los campos con datos, para no borrar lo ya guardado). */
+async function guardarCliente(nombre, datos) {
+  const patch = Object.fromEntries(Object.entries(datos).map(([k, v]) => [k, String(v || "").trim().replace(/\s+/g, " ")]).filter(([, v]) => v));
+  const previo = S.clientes.get(norm(nombre));
+  if (!Object.keys(patch).length || (previo && Object.entries(patch).every(([k, v]) => previo[k] === v))) return;
+  const { data, error } = previo
+    ? await sb.from("clientes").update(patch).eq("id", previo.id).select().maybeSingle()
+    : await sb.from("clientes").insert({ nombre: nombre.trim().replace(/\s+/g, " "), ...patch }).select().maybeSingle();
+  if (error) return toast("No se pudieron guardar los datos del cliente: " + errTxt(error));
+  if (data) S.clientes.set(data.clave, data);
+}
+$("#nCliente").addEventListener("change", () => {
+  const c = S.clientes.get(norm($("#nCliente").value)); if (!c) return;
+  [["#nRif", c.rif], ["#nTel", c.telefono], ["#nDir", c.direccion]].forEach(([s, v]) => { if (!$(s).value && v) $(s).value = v; });
+});
+
+/* ====================== Nota de entrega ====================== */
+let notaCtx = null;
+const sinNumero = nota => !/\d/.test(nota || "");
+/** Líneas que forman la misma nota de entrega (mismo N° y cliente; si no tiene número, además el mismo día). */
+function lineasDeNota(d) {
+  return S.docs.filter(x => x.nota === d.nota && norm(x.cliente) === norm(d.cliente) && (!sinNumero(d.nota) || x.fecha === d.fecha))
+    .sort((a, b) => a.fecha.localeCompare(b.fecha) || String(a.creado_en).localeCompare(String(b.creado_en)));
+}
+/** Tasa BCV registrada para la fecha o, si no hay, la más reciente anterior. */
+function tasaPara(fecha) {
+  if (S.tasas.get(fecha)) return { fecha, tasa: S.tasas.get(fecha) };
+  const prev = [...S.tasas].filter(([f]) => f <= fecha).sort((a, b) => b[0].localeCompare(a[0]))[0] || [...S.tasas].sort((a, b) => b[0].localeCompare(a[0]))[0];
+  return prev ? { fecha: prev[0], tasa: prev[1] } : { fecha, tasa: null };
+}
+function abrirNota(rows, preguntar) {
+  const d0 = rows[0], monedas = new Set(rows.map(mon)), hayBs = monedas.has("BS"), mixta = monedas.size > 1;
+  notaCtx = { rows };
+  $("#ntTitulo").textContent = preguntar ? "¿Desea generar la nota de entrega?" : "Nota de entrega";
+  $("#ntSub").textContent = `${d0.nota} · ${d0.cliente} · ${fdate(d0.fecha)}`;
+  const tot = { USD: 0, BS: 0 }; rows.forEach(d => tot[mon(d)] += d.monto);
+  $("#ntResumen").innerHTML = `<div class="tbl"><table><thead><tr><th class="n">Cant.</th><th>Producto</th><th class="n">Precio</th><th class="n">Total</th></tr></thead><tbody>
+    ${rows.map(d => `<tr><td class="n">${qf.format(d.cantidad)}</td><td><span class="code">${esc(d.umb)}</span> ${esc(S.productos.get(d.umb) && S.productos.get(d.umb) !== d.umb ? S.productos.get(d.umb) : "")}</td><td class="n">${nf4.format(d.precio)}</td><td class="n">${moneyHTML(d.monto, mon(d))}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td colspan="3">Total de la venta</td><td class="n">${[tot.USD ? moneyHTML(tot.USD, "USD") : "", tot.BS ? moneyHTML(tot.BS, "BS") : ""].filter(Boolean).join("<br>")}</td></tr></tfoot></table></div>`;
+  $("#ntMonedaTxt").textContent = !hayBs ? "La venta se registró en USD: la nota se emite en USD."
+    : mixta ? "La nota tiene montos en USD y en Bs.: para emitirla en una sola moneda, los Bs. se convierten a USD con la tasa BCV."
+    : "La venta se registró en bolívares. ¿Cómo desea emitir la nota?";
+  $("#ntMonedaOpc").hidden = !hayBs;
+  $$("input[name=ntMon]").forEach(r => { r.checked = r.value === (mixta ? "USD" : "BS"); r.disabled = mixta && r.value === "BS"; });
+  const t = tasaPara(d0.fecha);
+  $("#ntTasa").value = t.tasa ?? ""; $("#ntTasaFecha").value = t.fecha;
+  const c = S.clientes.get(norm(d0.cliente)) || {};
+  $("#ntRif").value = c.rif || ""; $("#ntTel").value = c.telefono || ""; $("#ntDir").value = c.direccion || "";
+  $("#ntObs").value = [...new Set(rows.map(d => d.observacion).filter(Boolean))].join(" · ");
+  $("#ntNo").textContent = preguntar ? "Ahora no" : "Cancelar";
+  msg("#ntMsg", "", ""); ntTasaVisible(); $("#dlgNota").showModal();
+}
+function ntTasaVisible() {
+  const hayBs = notaCtx?.rows.some(d => mon(d) === "BS"), usd = document.querySelector("input[name=ntMon]:checked")?.value === "USD";
+  $("#ntTasaRow").hidden = !(hayBs && usd);
+}
+$$("input[name=ntMon]").forEach(r => r.addEventListener("change", ntTasaVisible));
+$("#ntTasaHoy").addEventListener("click", async () => {
+  try {
+    const j = await (await fetch("https://ve.dolarapi.com/v1/dolares/oficial")).json(), t = num(j.promedio);
+    if (!(t > 0)) throw new Error("sin dato");
+    $("#ntTasa").value = t; $("#ntTasaFecha").value = today();
+    msg("#ntMsg", "info", `Tasa BCV de hoy (${fdate(today())}): Bs. ${nf4.format(t)}. Verifique que corresponda a la fecha de la venta.`);
+  } catch { msg("#ntMsg", "err", "No se pudo consultar la tasa en línea. Escríbala manualmente."); }
+});
+$("#formNota").addEventListener("submit", async ev => {
+  if (ev.submitter?.value !== "ok") return; ev.preventDefault();
+  const rows = notaCtx.rows, d0 = rows[0], hayBs = rows.some(d => mon(d) === "BS");
+  const moneda = hayBs ? document.querySelector("input[name=ntMon]:checked").value : "USD";
+  const convertir = moneda === "USD" && hayBs, tasa = num($("#ntTasa").value), tasaFecha = $("#ntTasaFecha").value || d0.fecha;
+  if (convertir && !(tasa > 0)) return msg("#ntMsg", "err", "Indique la tasa BCV para convertir los bolívares a dólares.");
+  $("#ntSi").disabled = true;
+  await guardarCliente(d0.cliente, { rif: $("#ntRif").value, telefono: $("#ntTel").value, direccion: $("#ntDir").value });
+  const lineas = rows.map(d => {
+    const conv = convertir && mon(d) === "BS";
+    return { cantidad: d.cantidad, concepto: S.productos.get(d.umb) || d.umb, precio: conv ? d.precio / tasa : d.precio, total: conv ? round2(d.monto / tasa) : d.monto };
+  });
+  const total = round2(lineas.reduce((a, l) => a + l.total, 0));
+  const totalBs = round2(rows.filter(d => mon(d) === "BS").reduce((a, d) => a + d.monto, 0));
+  const html = Documentos.notaHTML({
+    nota: d0.nota, fecha: d0.fecha, emitida: new Date(), condicion: condOf(d0), dias: DIAS_CREDITO, moneda,
+    cliente: { nombre: d0.cliente, rif: $("#ntRif").value.trim(), telefono: $("#ntTel").value.trim(), direccion: $("#ntDir").value.trim() },
+    lineas, conversion: convertir ? { tasa, fecha: tasaFecha, totalOriginal: totalBs } : null,
+    observacion: $("#ntObs").value.trim(), referencia: [...new Set(rows.map(d => d.referencia).filter(Boolean))].join(" / "),
+    despachadoPor: S.perfil.nombre
+  });
+  const { error } = await sb.from("notas_entrega").upsert({
+    nota: d0.nota, cliente: d0.cliente, fecha: d0.fecha, moneda, moneda_venta: mon(d0), tasa_bcv: convertir ? tasa : null,
+    total, emitida_en: new Date().toISOString(), emitida_por: S.user.id
+  }, { onConflict: "nota,cliente,fecha" });
+  if (error) toast("La nota se generó, pero no se pudo registrar su emisión: " + errTxt(error));
+  logEvento("nota_entrega", { nota: d0.nota, cliente: d0.cliente, moneda, total });
+  $("#ntSi").disabled = false; $("#dlgNota").close();
+  Documentos.abrir(html, { titulo: `Nota de entrega ${d0.nota} · ${d0.cliente}`, archivo: `Nota de entrega ${d0.nota} - ${d0.cliente}.pdf` });
 });
 $("#addLine").addEventListener("click", addLine);
 $("#lines").addEventListener("click", e => { if (e.target.closest("[data-rm]")) { e.target.closest(".line").remove(); recalc(); } });
@@ -751,6 +862,7 @@ document.addEventListener("click", async e => {
   if (t.dataset.pay) { const d = S.byId.get(t.dataset.pay); if (d) openPago(S.docs.filter(x => x.status === "DESPACHADO" && x.nota === d.nota && norm(x.cliente) === norm(d.cliente)), `Registrar pago · ${d.nota} · ${d.cliente}`); }
   if (t.dataset.paycli) { const rows = S.docs.filter(x => x.status === "DESPACHADO" && norm(x.cliente) === t.dataset.paycli); if (rows.length) openPago(rows, "Registrar pago · " + rows[0].cliente); }
   if (t.dataset.edit) openEdit(t.dataset.edit);
+  if (t.dataset.nota) { const d = S.byId.get(t.dataset.nota); if (d) abrirNota(lineasDeNota(d), false); }
   if (t.dataset.pagarcom) abrirPagoComision(t.dataset.pagarcom);
   if (t.dataset.anular) { const p = S.comisiones.find(c => c.id === t.dataset.anular); anularId = p.id; $("#anSub").textContent = `${vendName(p.vendedor_id)} · ${monthName(p.mes.slice(0, 7))} · ${money(p.comision_bs, "BS")}`; $("#anMotivo").value = ""; $("#anMsg").hidden = true; $("#dlgAnular").showModal(); }
   if (t.dataset.del) {
@@ -775,6 +887,46 @@ $("#exportBtn").addEventListener("click", () => {
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); a.download = `despachos_${s}_al_${e}.csv`; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   logEvento("exportacion", { desde: s, hasta: e, registros: rows.length });
+});
+
+/* ====================== Reporte en PDF ====================== */
+$("#rPdf").addEventListener("click", () => {
+  const [s, e] = range(), rows = inPeriod().sort((a, b) => a.fecha.localeCompare(b.fecha) || String(a.nota).localeCompare(String(b.nota)));
+  if (!rows.length) return toast("No hay despachos registrados en este período.");
+  const tipo = { dia: "diario", semana: "semanal", mes: "mensual" }[S.ptype];
+  const sumM = (r, m) => r.filter(d => mon(d) === m).reduce((a, d) => a + d.monto, 0);
+  const kpis = ["USD", "BS"].map(m => {
+    const r = rows.filter(d => mon(d) === m); if (!r.length) return null;
+    const s1 = f => r.filter(f).reduce((a, d) => a + d.monto, 0);
+    return { moneda: m, items: [
+      { lbl: `Total despachado (${r.length} líneas)`, val: money(s1(() => true), m) },
+      { lbl: "Cobrado · validado y comisión", val: money(s1(d => d.status !== "DESPACHADO"), m), cls: "ok" },
+      { lbl: "Por cobrar · despachado", val: money(s1(d => d.status === "DESPACHADO"), m), cls: "pend" },
+      { lbl: "Vencido a la fecha", val: money(s1(isVencido), m), cls: "bad" }] };
+  }).filter(Boolean);
+  const tablaGrupo = (titulo, key, label, cant) => {
+    const g = [...group(rows, key)].sort((a, b) => (b[1].USD - a[1].USD) || (b[1].BS - a[1].BS));
+    const t = g.reduce((a, [, o]) => ({ n: a.n + o.n, USD: a.USD + o.USD, BS: a.BS + o.BS }), { n: 0, USD: 0, BS: 0 });
+    return { titulo, columnas: [{ t: label }, { t: "Líneas", n: true }, ...(cant ? [{ t: "Cantidad", n: true }] : []), { t: "Monto USD", n: true }, { t: "Monto Bs.", n: true }],
+      filas: g.map(([k, o]) => [esc(k), o.n, ...(cant ? [qf.format(o.cant)] : []), o.USD ? nf.format(o.USD) : "—", o.BS ? nf.format(o.BS) : "—"]),
+      pie: ["Total", t.n, ...(cant ? [""] : []), nf.format(t.USD), nf.format(t.BS)] };
+  };
+  const tablas = [tablaGrupo("Por cliente", d => d.cliente, "Cliente")];
+  if ($("#rDetalle").checked) tablas.push({
+    titulo: `Detalle de despachos (${rows.length})`,
+    columnas: [{ t: "Fecha" }, { t: "Cliente" }, { t: "Cant.", n: true }, { t: "UMB" }, { t: "Precio", n: true }, { t: "Monto", n: true }, { t: "Status" }, { t: "N° nota" }, { t: "Responsable" }],
+    filas: rows.map(d => [fdate(d.fecha), esc(d.cliente), qf.format(d.cantidad), esc(d.umb), nf4.format(d.precio), `${mon(d) === "BS" ? "Bs." : "USD"} ${nf.format(d.monto)}`, STATUS_TXT[d.status] || esc(d.status), esc(d.nota), esc(d.responsable === "VENDEDOR" && d.vendedor_id ? "VENDEDOR · " + vendName(d.vendedor_id) : d.responsable)]),
+    pie: ["Total", "", "", "", "", [sumM(rows, "USD") ? money(sumM(rows, "USD"), "USD") : "", sumM(rows, "BS") ? money(sumM(rows, "BS"), "BS") : ""].filter(Boolean).join("<br>"), "", "", ""]
+  });
+  const html = Documentos.reporteHTML({
+    titulo: `Reporte ${tipo} de despachos y cobranzas`, periodo: periodLabel().replace(/^Reporte \w+ · /, ""), usuario: S.perfil.nombre, kpis,
+    pares: [[tablaGrupo("Por responsable", d => d.responsable === "VENDEDOR" && d.vendedor_id ? `VENDEDOR · ${vendName(d.vendedor_id)}` : d.responsable, "Responsable"),
+             tablaGrupo("Por status", d => STATUS_TXT[d.status] || d.status, "Status")],
+            [tablaGrupo("Por condición de pago", d => COND_TXT[condOf(d)], "Condición"), tablaGrupo("Por UMB", d => d.umb, "UMB", true)]],
+    tablas, nota: "Los montos en USD y en Bs. (tasa BCV) se muestran por separado y no se suman entre sí. Vencido: despachos sin cobrar cuyo plazo de pago ya pasó."
+  });
+  Documentos.abrir(html, { titulo: `Reporte ${tipo} · ${periodLabel().replace(/^Reporte \w+ · /, "")}`, archivo: `Reporte ${tipo} ${s} al ${e}.pdf` });
+  logEvento("exportacion", { formato: "pdf", desde: s, hasta: e, registros: rows.length });
 });
 
 /* ====================== Filtros y periodo ====================== */
