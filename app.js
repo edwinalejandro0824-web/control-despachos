@@ -74,6 +74,32 @@ function calcComision(lineas, tasa) {
   const comBs = comUsd == null || !(t > 0) ? null : round2(comUsd * t);
   return { n: lineas.length, usd, bs, base, comUsd, comBs, tasa: t };
 }
+/** Cierre = último día del mes en curso (28, 29, 30 o 31 según el mes). */
+function cierreTxt(ym) {
+  const fin = monthFin(ym), dias = +fin.slice(8), hoy = today();
+  const estado = hoy > fin ? "cerrado" : hoy.slice(0, 7) === ym ? `faltan ${diffDays(fin, hoy)} ${diffDays(fin, hoy) === 1 ? "día" : "días"}` : "por iniciar";
+  return `Cierre del mes: <b>${fdate(fin)}</b> (mes de ${dias} días · ${estado}) · Tasa BCV para pagar: la del ${fdate(fechaTasa(ym))}`;
+}
+/** Acumulado día a día del vendedor en el mes: lo vendido (por fecha de despacho) y lo cobrado (por fecha de pago). */
+function diarioHTML(vid, ym) {
+  const ini = monthIni(ym), fin = monthFin(ym), hasta = today() < fin ? today() : fin;
+  const mias = S.docs.filter(d => d.vendedor_id === vid);
+  const hayBs = mias.some(d => mon(d) === "BS" && ((d.fecha >= ini && d.fecha <= fin) || (d.fecha_pago >= ini && d.fecha_pago <= fin)));
+  const filas = []; let acU = 0, acB = 0, vU = 0, vB = 0;
+  for (let dia = ini; dia <= hasta; dia = addDays(dia, 1)) {
+    const vend = mias.filter(d => d.fecha === dia), cob = mias.filter(d => d.status !== "DESPACHADO" && d.fecha_pago === dia);
+    if (!vend.length && !cob.length) continue;
+    const s = (rows, m) => rows.filter(d => mon(d) === m).reduce((a, d) => a + d.monto, 0);
+    const dvU = s(vend, "USD"), dvB = s(vend, "BS"), dcU = s(cob, "USD"), dcB = s(cob, "BS");
+    vU += dvU; vB += dvB; acU += dcU; acB += dcB;
+    filas.push(`<tr><td class="num" style="text-align:left">${DIAS[parse(dia).getDay()].slice(0, 3)} ${fdate(dia)}</td><td class="n">${dvU ? nf.format(dvU) : "—"}</td>${hayBs ? `<td class="n">${dvB ? nf.format(dvB) : "—"}</td>` : ""}<td class="n">${dcU ? nf.format(dcU) : "—"}</td>${hayBs ? `<td class="n">${dcB ? nf.format(dcB) : "—"}</td>` : ""}<td class="n"><b>${nf.format(acU)}</b></td><td class="n"><b>${nf.format(round2(acU * PCT / 100))}</b></td></tr>`);
+  }
+  if (!filas.length) return empty(`Sin ventas ni cobros del ${fdate(ini)} al ${fdate(hasta)}.`);
+  return `<table><thead><tr><th>Día</th><th class="n">Vendido USD</th>${hayBs ? `<th class="n">Vendido Bs.</th>` : ""}<th class="n">Cobrado USD</th>${hayBs ? `<th class="n">Cobrado Bs.</th>` : ""}<th class="n">Cobrado acumulado USD</th><th class="n">Comisión ${PCT}% acumulada USD</th></tr></thead>
+    <tbody>${filas.join("")}</tbody>
+    <tfoot><tr><td>Total al ${fdate(hasta)}</td><td class="n">${nf.format(vU)}</td>${hayBs ? `<td class="n">${nf.format(vB)}</td>` : ""}<td class="n">${nf.format(acU)}</td>${hayBs ? `<td class="n">${nf.format(acB)}</td>` : ""}<td class="n">${nf.format(acU)}</td><td class="n">${nf.format(round2(acU * PCT / 100))}</td></tr></tfoot></table>
+    ${hayBs ? `<p class="muted" style="font-size:.78rem;margin:8px 0 0">Los cobros en Bs. se pasan a USD con la tasa BCV del ${fdate(fechaTasa(ym))} al calcular la comisión final.</p>` : ""}`;
+}
 function calcHTML(c, ym) {
   const ft = fechaTasa(ym);
   return `<div class="calc">
@@ -387,12 +413,15 @@ function renderComisiones() {
   const cards = [...vids].map(vid => {
     const lineas = lineasComision(vid, ym).sort((a, b) => a.fecha_pago.localeCompare(b.fecha_pago));
     const pagadas = S.comisiones.filter(c => c.vendedor_id === vid && c.mes === monthIni(ym));
-    if (!lineas.length && !pagadas.length) return "";
+    const movio = S.docs.some(d => d.vendedor_id === vid && ((d.fecha >= monthIni(ym) && d.fecha <= monthFin(ym)) || (d.fecha_pago >= monthIni(ym) && d.fecha_pago <= monthFin(ym))));
+    if (!lineas.length && !pagadas.length && !movio) return "";
     const c = calcComision(lineas, tasa);
     return `<div class="card vcard">
-      <header><h2>${esc(vendName(vid))} · cobros de ${monthName(ym)}</h2>
-        ${lineas.length ? `<button class="btn primary" data-pagarcom="${vid}" ${c.comBs == null ? "disabled title='Indique la tasa BCV'" : ""}>Registrar pago de comisión</button>` : `<span class="chip COMISION">COMISIÓN PAGADA</span>`}</header>
-      ${lineas.length ? calcHTML(c, ym) : ""}
+      <header><h2>${esc(vendName(vid))} · ${monthName(ym)}</h2>
+        ${lineas.length ? `<button class="btn primary" data-pagarcom="${vid}" ${c.comBs == null ? "disabled title='Indique la tasa BCV'" : ""}>Registrar pago de comisión</button>` : pagadas.length ? `<span class="chip COMISION">COMISIÓN PAGADA</span>` : ""}</header>
+      <p class="muted" style="margin:0;font-size:.85rem">${cierreTxt(ym)}</p>
+      <div><h3>Acumulado día a día (en USD)</h3><div class="tbl">${diarioHTML(vid, ym)}</div></div>
+      ${lineas.length ? `<div><h3>Comisión a pagar</h3>${calcHTML(c, ym)}</div>` : ""}
       ${pagadas.map(p => `<div class="msg ok">Pagado el ${fdate(p.pagado_en)}: ${money(p.comision_bs, "BS")} (${money(p.comision_usd, "USD")} × ${nf4.format(p.tasa_bcv)}) por ${p.lineas} ventas cobradas${p.referencia_pago ? ` · Ref. ${esc(p.referencia_pago)}` : ""}.</div>`).join("")}
       ${lineas.length ? `<div class="tbl">${tablaDespachos(lineas, null, "")}</div>` : ""}
     </div>`;
@@ -464,7 +493,7 @@ function renderMisVentas() {
   if (!$("#mvMes").value) $("#mvMes").value = today().slice(0, 7);
   const ym = $("#mvMes").value, ini = monthIni(ym), fin = monthFin(ym), vid = S.perfil.vendedor_id;
   $("#mvTitulo").textContent = `Mis ventas · ${vid ? vendName(vid) : S.perfil.nombre} · ${monthName(ym)}`;
-  if (!vid) { $("#mvKpis").innerHTML = `<div class="msg info">Su usuario todavía no está asociado a un vendedor. Pida al administrador que lo asocie.</div>`; ["#mvCalc", "#mvCobradas", "#mvVentas", "#mvPend", "#mvHist"].forEach(s => $(s).innerHTML = ""); return; }
+  if (!vid) { $("#mvKpis").innerHTML = `<div class="msg info">Su usuario todavía no está asociado a un vendedor. Pida al administrador que lo asocie.</div>`; ["#mvCierre", "#mvDiario", "#mvCalc", "#mvCobradas", "#mvVentas", "#mvPend", "#mvHist"].forEach(s => $(s).innerHTML = ""); return; }
   if (!S.loaded) return;
   const mias = S.docs.filter(d => d.vendedor_id === vid);
   const vendidas = mias.filter(d => d.fecha >= ini && d.fecha <= fin);
@@ -479,6 +508,8 @@ function renderMisVentas() {
     <div class="kpi k-ok"><span class="lbl">Cobrado en el mes</span><span class="val">${money(s(cobradas, "USD"), "USD")}</span><span class="sub">${cobradas.length} líneas${s(cobradas, "BS") ? ` · además ${money(s(cobradas, "BS"), "BS")}` : ""}</span></div>
     <div class="kpi k-pend"><span class="lbl">Pendiente por cobrar (total)</span><span class="val">${money(s(pend, "USD"), "USD")}</span><span class="sub">${pend.length} líneas · no generan comisión todavía</span></div>
     <div class="kpi k-ok"><span class="lbl">Comisión ${PCT}% del mes</span><span class="val big">${pagada.length ? money(pagada.reduce((a, p) => a + num(p.comision_usd), 0), "USD") : (c.comUsd == null ? "—" : money(c.comUsd, "USD"))}</span><span class="sub">${pagada.length ? "Pagada" : "Se paga el mes siguiente"}</span></div>`;
+  $("#mvCierre").innerHTML = cierreTxt(ym);
+  $("#mvDiario").innerHTML = diarioHTML(vid, ym);
   $("#mvCalc").innerHTML = (pagada.length ? pagada.map(p => `<div class="msg ok" style="margin-bottom:10px">Comisión de ${monthName(ym)} pagada el ${fdate(p.pagado_en)}: <b>${money(p.comision_bs, "BS")}</b> (${money(p.comision_usd, "USD")} a tasa BCV ${nf4.format(p.tasa_bcv)}).</div>`).join("") : "")
     + (porPagar.length ? calcHTML(c, ym) + `<p class="muted" style="font-size:.8rem;margin:10px 0 0">El monto en bolívares se calcula con la tasa BCV del ${fdate(fechaTasa(ym))}${tasaDeMes(ym) ? "" : ", que aún no está registrada"}.</p>` : (pagada.length ? "" : empty("No hay ventas cobradas pendientes de comisión en este mes.")));
   $("#mvCobradas").innerHTML = tablaDespachos(cobradas, null, "No cobró ventas en este mes.");

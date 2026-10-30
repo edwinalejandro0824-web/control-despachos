@@ -170,7 +170,7 @@
     <section role="tabpanel" id="p-comisiones" hidden>
       <div>
         <h2>Comisiones de vendedores</h2>
-        <p class="lead">La comisión del mes es el <b id="cPct"></b> de las ventas del vendedor <b>cobradas entre el primer y el último día del mes</b> (status VALIDADO con fecha de pago en ese mes). Se paga el mes siguiente, en bolívares, a la tasa BCV del día 29. Al registrar el pago, esas ventas pasan a status COMISIÓN y no se vuelven a contar.</p>
+        <p class="lead">La comisión del mes es el <b id="cPct"></b> de las ventas del vendedor <b>cobradas entre el primer y el último día del mes</b> (status VALIDADO con fecha de pago en ese mes; el cierre es el último día, sea 28, 29, 30 o 31). Se calcula en USD y se paga el mes siguiente, en bolívares, a la tasa BCV del día 29. Al registrar el pago, esas ventas pasan a status COMISIÓN y no se vuelven a contar.</p>
       </div>
       <div class="card filters">
         <label class="f">Mes cobrado<input type="month" id="cMes"></label>
@@ -191,6 +191,8 @@
         <label class="f">Mes<input type="month" id="mvMes"></label>
       </div>
       <div class="kgrid" id="mvKpis"></div>
+      <p class="muted" id="mvCierre" style="margin:0;font-size:.85rem"></p>
+      <div class="card"><h3>Acumulado día a día (en USD)</h3><div class="tbl" id="mvDiario"></div></div>
       <div class="card"><h3>Cálculo de la comisión del mes</h3><div id="mvCalc"></div></div>
       <div class="card"><h3>Ventas cobradas en el mes (cuentan para la comisión)</h3><div class="tbl" id="mvCobradas"></div></div>
       <div class="card"><h3>Ventas despachadas en el mes</h3><div class="tbl" id="mvVentas"></div></div>
