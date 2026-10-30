@@ -39,7 +39,6 @@ const monthIni = ym => `${ym}-01`;
 const monthFin = ym => { const [y, m] = ym.split("-").map(Number); return isoOf(new Date(y, m, 0)); };
 const monthName = ym => { const [y, m] = ym.split("-").map(Number); return `${MESES[m - 1]} ${y}`; };
 const fechaTasa = ym => { const fin = monthFin(ym); return +fin.slice(8) >= DIA_TASA ? `${ym}-${pad(DIA_TASA)}` : fin; };
-const prevMonth = () => { const d = new Date(); return isoOf(new Date(d.getFullYear(), d.getMonth() - 1, 1)).slice(0, 7); };
 
 /* ====================== Estado ====================== */
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
@@ -367,8 +366,8 @@ function renderCobranza() {
 function tasaDeMes(ym) { return S.tasas.get(fechaTasa(ym)) || null; }
 function renderComisiones() {
   $("#cPct").textContent = PCT + "%";
-  if (!$("#cMes").value) $("#cMes").value = prevMonth();
-  const ym = $("#cMes").value, ft = fechaTasa(ym);
+  if (!$("#cMes").value) $("#cMes").value = today().slice(0, 7);
+  const ym = $("#cMes").value, ft = fechaTasa(ym), enCurso = ym === today().slice(0, 7);
   $("#cFechaTasaTxt").textContent = fdate(ft);
   const guardada = tasaDeMes(ym);
   if (document.activeElement !== $("#cTasa")) $("#cTasa").value = guardada ?? "";
@@ -377,6 +376,7 @@ function renderComisiones() {
   const tasa = num($("#cTasa").value);
 
   const avisos = [];
+  if (enCurso) avisos.push(`Mes en curso: la comisión mostrada es lo acumulado con los cobros registrados hasta hoy, ${fdate(today())}. Puede seguir subiendo hasta el cierre del mes; se paga el mes siguiente.`);
   const sinVend = S.docs.filter(d => d.responsable === "VENDEDOR" && !d.vendedor_id && d.status === "VALIDADO");
   if (sinVend.length) avisos.push(`${sinVend.length} ${sinVend.length === 1 ? "venta cobrada del responsable VENDEDOR no tiene" : "ventas cobradas del responsable VENDEDOR no tienen"} vendedor asignado y no entran en ninguna comisión. Asígnelo con «Editar» en el Registro de despachos.`);
   const sinFecha = S.docs.filter(d => d.vendedor_id && d.status === "VALIDADO" && !d.fecha_pago);
