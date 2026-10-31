@@ -205,7 +205,7 @@ function reporteHTML(r) {
   ${(r.pares || []).map(([a, b]) => `<div class="rp-grid"><div>${bloque(a)}</div><div>${b ? bloque(b) : ""}</div></div>`).join("")}
   ${(r.tablas || []).map(bloque).join("")}
   ${r.nota ? `<p style="font-size:10px;color:#555;margin-top:10px">${esc(r.nota)}</p>` : ""}
-  <div class="rp-pie"><span>${esc(e.NOMBRE || "")} · Control de Despachos y Cobranzas</span><span>${esc(r.periodo)}</span></div>
+  <div class="rp-pie"><span>${esc(e.NOMBRE || "")} · Sistema DespachoX V1</span><span>${esc(r.periodo)}</span></div>
 </div>`;
 }
 

@@ -1,6 +1,6 @@
 {
-  "name": "Control de Despachos y Cobranzas",
-  "short_name": "Despachos",
+  "name": "Sistema DespachoX V1",
+  "short_name": "DespachoX",
   "description": "Registro de despachos, cobranzas y comisiones de vendedores.",
   "lang": "es-VE",
   "start_url": "./",
