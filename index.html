@@ -186,14 +186,14 @@
     <section role="tabpanel" id="p-comisiones" hidden>
       <div>
         <h2>Comisiones de vendedores</h2>
-        <p class="lead">La comisión del mes es el <b id="cPct"></b> de las ventas del vendedor <b>cobradas entre el primer y el último día del mes</b> (status VALIDADO con fecha de pago en ese mes; el cierre es el último día, sea 28, 29, 30 o 31). Se calcula en USD y se paga el mes siguiente, en bolívares, a la tasa BCV del día 29. Al registrar el pago, esas ventas pasan a status COMISIÓN y no se vuelven a contar.</p>
+        <p class="lead">La comisión del mes es el <b id="cPct"></b> de las ventas del vendedor <b>cobradas entre el primer y el último día del mes</b> (status VALIDADO con fecha de pago en ese mes; el cierre es el último día, sea 28, 29, 30 o 31). Se calcula en USD y se paga el mes siguiente, en bolívares, a la tasa BCV del día 30 (en febrero, la del último día). La tasa se toma del BCV automáticamente cada día. Al registrar el pago, esas ventas pasan a status COMISIÓN y no se vuelven a contar.</p>
       </div>
+      <div class="kgrid" id="cTasaHoy"></div>
       <div class="card filters">
         <label class="f">Mes cobrado<input type="month" id="cMes"></label>
-        <label class="f">Tasa BCV del <span id="cFechaTasaTxt"></span> (Bs. por USD) <span class="req">*</span><input type="number" step="0.0001" min="0" id="cTasa" inputmode="decimal"></label>
+        <label class="f" style="flex:0 1 280px"><span>Tasa BCV del <span id="cFechaTasaTxt"></span> (Bs. por USD) <span class="req">*</span></span><input type="number" step="0.0001" min="0" id="cTasa" inputmode="decimal"></label>
         <button class="btn" type="button" id="cGuardarTasa">Guardar tasa</button>
-        <button class="btn" type="button" id="cConsultarTasa">Consultar tasa BCV de hoy</button>
-        <span class="muted" id="cTasaInfo" style="font-size:.8rem;flex:1 1 220px"></span>
+        <span class="muted" id="cTasaInfo" style="font-size:.8rem;flex:1 1 260px"></span>
       </div>
       <div id="cAvisos"></div>
       <div id="cVendedores" style="display:grid;gap:20px"></div>
@@ -207,6 +207,7 @@
         <label class="f">Mes<input type="month" id="mvMes"></label>
       </div>
       <div class="kgrid" id="mvKpis"></div>
+      <div class="kgrid" id="mvTasaHoy"></div>
       <p class="muted" id="mvCierre" style="margin:0;font-size:.85rem"></p>
       <div class="card"><h3>Acumulado día a día (en USD)</h3><div class="tbl" id="mvDiario"></div></div>
       <div class="card"><h3>Cálculo de la comisión del mes</h3><div id="mvCalc"></div></div>

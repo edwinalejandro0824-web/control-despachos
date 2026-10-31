@@ -5,7 +5,7 @@ window.CONFIG = {
   SUPABASE_ANON_KEY: "sb_publishable_c9fpBV7aC1BkbvHJJgVb9w_H6Vyk7rH",
   COMISION_PORCENTAJE: 3,
   DIAS_CREDITO: 7,
-  DIA_TASA_COMISION: 29,
+  DIA_TASA_COMISION: 30,
   IVA_PORCENTAJE: 16,
   // Catálogo de distribución (Brochure de venta 2026). Precios en USD SIN IVA.
   // Para cambiar un precio o una descripción, edite la línea del producto.

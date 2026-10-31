@@ -94,7 +94,8 @@ function calcComision(lineas, tasa) {
 /** Cierre = último día del mes en curso (28, 29, 30 o 31 según el mes). */
 function cierreTxt(ym) {
   const fin = monthFin(ym), dias = +fin.slice(8), hoy = today();
-  const estado = hoy > fin ? "cerrado" : hoy.slice(0, 7) === ym ? `faltan ${diffDays(fin, hoy)} ${diffDays(fin, hoy) === 1 ? "día" : "días"}` : "por iniciar";
+  const falta = diffDays(fin, hoy);
+  const estado = hoy > fin ? "cerrado" : hoy.slice(0, 7) !== ym ? "por iniciar" : falta === 0 ? "cierra hoy" : `faltan ${falta} ${falta === 1 ? "día" : "días"}`;
   return `Cierre del mes: <b>${fdate(fin)}</b> (mes de ${dias} días · ${estado}) · Tasa BCV para pagar: la del ${fdate(fechaTasa(ym))}`;
 }
 /** Acumulado día a día del vendedor en el mes: lo vendido (por fecha de despacho) y lo cobrado (por fecha de pago). */
@@ -446,15 +447,38 @@ function renderCobranza() {
 }
 
 /* ====================== Comisiones (administrador) ====================== */
-function tasaDeMes(ym) { return S.tasas.get(fechaTasa(ym)) || null; }
+/** Tasa para pagar la comisión del mes: la del día 30 (último día en febrero). La base de datos guarda
+ *  la tasa BCV cada día de forma automática; si ese día no hubo tasa nueva (fin de semana) vale la vigente.
+ *  Antes del día 30 se muestra la tasa vigente como provisional. */
+function tasaComision(ym) {
+  const ft = fechaTasa(ym), f = [...S.tasas.keys()].filter(x => x <= ft).sort().at(-1);
+  if (!f || f < monthIni(ym)) return null;
+  return { tasa: S.tasas.get(f), fecha: f, provisional: today() < ft };
+}
+function tasaDeMes(ym) { return tasaComision(ym)?.tasa ?? null; }
+function tasaHoyHTML(ym) {
+  const ult = [...S.tasas.keys()].sort().at(-1), tp = tasaComision(ym), ft = fechaTasa(ym);
+  return `<div class="kpi k-tot"><span class="lbl">Tasa BCV del día</span>
+      <span class="val">${ult ? "Bs. " + nf4.format(S.tasas.get(ult)) : "—"}</span>
+      <span class="sub">${ult ? `Vigente desde el ${fdate(ult)} · se actualiza automáticamente cada día` : "Aún no se ha recibido la tasa del BCV"}</span></div>
+    <div class="kpi ${tp && !tp.provisional ? "k-ok" : "k-pend"}"><span class="lbl">Tasa para pagar la comisión de ${monthName(ym)}</span>
+      <span class="val">${tp ? "Bs. " + nf4.format(tp.tasa) : "—"}</span>
+      <span class="sub">${!tp ? `Se toma la tasa BCV del ${fdate(ft)}` : tp.provisional ? `Provisional (tasa del ${fdate(tp.fecha)}): el ${fdate(ft)} se fija sola con la tasa de ese día` : `Tasa BCV del ${fdate(tp.fecha)}, fijada para el pago`}</span></div>`;
+}
+let tasaManual = false;
 function renderComisiones() {
   $("#cPct").textContent = PCT + "%";
   if (!$("#cMes").value) $("#cMes").value = today().slice(0, 7);
   const ym = $("#cMes").value, ft = fechaTasa(ym), enCurso = ym === today().slice(0, 7);
   $("#cFechaTasaTxt").textContent = fdate(ft);
-  const guardada = tasaDeMes(ym);
-  if (document.activeElement !== $("#cTasa")) $("#cTasa").value = guardada ?? "";
-  $("#cTasaInfo").textContent = guardada ? `Tasa guardada para el ${fdate(ft)}.` : `Aún no hay tasa guardada para el ${fdate(ft)}.`;
+  $("#cTasaHoy").innerHTML = tasaHoyHTML(ym);
+  const tp = tasaComision(ym);
+  if (!tasaManual && document.activeElement !== $("#cTasa")) $("#cTasa").value = tp?.tasa ?? "";
+  $("#cTasaInfo").textContent = tasaManual ? "Tasa escrita a mano: pulse «Guardar tasa» para fijarla."
+    : !tp ? `Aún no hay tasa BCV para ${monthName(ym)}. Escríbala y pulse «Guardar tasa».`
+    : tp.provisional ? `Provisional: tasa BCV vigente del ${fdate(tp.fecha)}. El ${fdate(ft)} se coloca sola la tasa de ese día.`
+    : tp.fecha === ft ? `Tasa BCV del ${fdate(ft)}, colocada automáticamente.`
+    : `El ${fdate(ft)} no hubo tasa nueva; se usa la vigente del ${fdate(tp.fecha)}.`;
   if (!S.loaded) return;
   const tasa = num($("#cTasa").value);
 
@@ -496,21 +520,9 @@ async function guardarTasa(fecha, tasa, fuente) {
   if (error) { toast("No se pudo guardar la tasa: " + errTxt(error)); return false; }
   S.tasas.set(fecha, tasa); toast(`Tasa del ${fdate(fecha)} guardada: Bs. ${nf4.format(tasa)}.`); render(); return true;
 }
-$("#cMes").addEventListener("change", () => { $("#cTasa").value = ""; render(); });
-$("#cTasa").addEventListener("input", () => renderComisiones());
-$("#cGuardarTasa").addEventListener("click", () => guardarTasa(fechaTasa($("#cMes").value), num($("#cTasa").value)));
-$("#cConsultarTasa").addEventListener("click", async () => {
-  try {
-    const r = await fetch("https://ve.dolarapi.com/v1/dolares/oficial"); const j = await r.json();
-    const t = num(j.promedio); if (!(t > 0)) throw new Error("sin dato");
-    $("#cTasa").value = t;
-    const ft = fechaTasa($("#cMes").value);
-    $("#cTasaInfo").textContent = today() === ft
-      ? `Tasa BCV de hoy: Bs. ${nf4.format(t)}. Pulse «Guardar tasa» para fijarla.`
-      : `Atención: esta es la tasa BCV de hoy (${fdate(today())}), no la del ${fdate(ft)}. Verifíquela antes de guardar.`;
-    renderComisiones();
-  } catch { toast("No se pudo consultar la tasa en línea. Escríbala manualmente."); }
-});
+$("#cMes").addEventListener("change", () => { tasaManual = false; $("#cTasa").value = ""; render(); });
+$("#cTasa").addEventListener("input", () => { tasaManual = true; renderComisiones(); });
+$("#cGuardarTasa").addEventListener("click", async () => { if (await guardarTasa(fechaTasa($("#cMes").value), num($("#cTasa").value))) { tasaManual = false; renderComisiones(); } });
 let comVid = null;
 function abrirPagoComision(vid) {
   const ym = $("#cMes").value, tasa = num($("#cTasa").value), lineas = lineasComision(vid, ym), c = calcComision(lineas, tasa);
@@ -565,6 +577,7 @@ function renderMisVentas() {
     <div class="kpi k-ok"><span class="lbl">Cobrado en el mes</span><span class="val">${money(s(cobradas, "USD"), "USD")}</span><span class="sub">${cobradas.length} líneas${s(cobradas, "BS") ? ` · además ${money(s(cobradas, "BS"), "BS")}` : ""}</span></div>
     <div class="kpi k-pend"><span class="lbl">Pendiente por cobrar (total)</span><span class="val">${money(s(pend, "USD"), "USD")}</span><span class="sub">${pend.length} líneas · no generan comisión todavía</span></div>
     <div class="kpi k-ok"><span class="lbl">Comisión ${PCT}% del mes</span><span class="val big">${pagada.length ? money(pagada.reduce((a, p) => a + num(p.comision_usd), 0), "USD") : (c.comUsd == null ? "—" : money(c.comUsd, "USD"))}</span><span class="sub">${pagada.length ? "Pagada" : "Se paga el mes siguiente"}</span></div>`;
+  $("#mvTasaHoy").innerHTML = tasaHoyHTML(ym);
   $("#mvCierre").innerHTML = cierreTxt(ym);
   $("#mvDiario").innerHTML = diarioHTML(vid, ym);
   $("#mvCalc").innerHTML = (pagada.length ? pagada.map(p => `<div class="msg ok" style="margin-bottom:10px">Comisión de ${monthName(ym)} pagada el ${fdate(p.pagado_en)}: <b>${money(p.comision_bs, "BS")}</b> (${money(p.comision_usd, "USD")} a tasa BCV ${nf4.format(p.tasa_bcv)}).</div>`).join("") : "")
