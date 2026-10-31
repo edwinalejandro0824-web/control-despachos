@@ -176,7 +176,7 @@
     <section role="tabpanel" id="p-cobranza" hidden>
       <div>
         <h2>Cuentas por cobrar</h2>
-        <p class="lead">Todos los despachos con status DESPACHADO, de cualquier fecha, agrupados por cliente. En rojo: pagos vencidos. Contado vence el mismo día; crédito vence a los 7 días.</p>
+        <p class="lead">Todos los despachos con status DESPACHADO, de cualquier fecha, agrupados por cliente. Los montos incluyen el IVA y descuentan los abonos. En rojo: pagos vencidos. Contado vence el mismo día; crédito vence a los 7 días.</p>
       </div>
       <div class="kgrid" id="cobroKpis"></div>
       <div class="tbl" id="tablaCobro"></div>
@@ -236,6 +236,12 @@
         <div class="tbl" id="aProductos"></div>
       </div>
       <div class="card">
+        <h3>Clientes con nombres parecidos</h3>
+        <p class="lead" style="margin:0 0 10px">Si un mismo cliente quedó escrito de dos formas, sus cuentas por cobrar y abonos se separan. Elija el nombre correcto y unifique: todas sus ventas pasan a ese nombre (queda constancia en el historial).</p>
+        <div class="tbl" id="aClientes"></div>
+        <div id="aCliMsg" class="msg" hidden></div>
+      </div>
+      <div class="card">
         <h3>Tasas BCV registradas</h3>
         <form class="filters" id="formTasa" style="margin-bottom:10px">
           <label class="f">Fecha<input type="date" id="aTasaFecha"></label>
@@ -264,6 +270,8 @@
     <div class="db">
       <div class="checks" id="pagoLineas"></div>
       <div class="row">
+        <label class="f" id="pgMontoWrap" hidden style="grid-column:1/-1">Monto que paga el cliente <span id="pgMontoMon"></span> <span class="req">*</span><input type="number" step="0.01" min="0" id="pgMonto" inputmode="decimal"></label>
+        <p class="muted" id="pgInfo" style="margin:0;font-size:.8rem;grid-column:1/-1" hidden></p>
         <label class="f">Fecha de pago <span class="req">*</span><input type="date" id="pgFecha"></label>
         <label class="f">Nro. de referencia <span class="req">*</span><input id="pgRef" autocomplete="off" placeholder="Del comprobante bancario"></label>
       </div>
@@ -274,6 +282,15 @@
       <button class="btn" value="cancel" formnovalidate>Cancelar</button>
       <button class="btn primary" id="pgSave" value="ok">Registrar pago</button>
     </div>
+  </form>
+</dialog>
+
+<!-- abonos de un cliente -->
+<dialog id="dlgAbonos">
+  <form method="dialog">
+    <div class="dh"><h2 id="abTitulo">Abonos</h2><p class="lead" style="margin-top:2px">Pagos parciales registrados. Cuando los abonos cubren el total de la nota (con IVA), las ventas pasan a VALIDADO.</p></div>
+    <div class="db"><div class="tbl" id="abLista"></div><div id="abMsg" class="msg" hidden></div></div>
+    <div class="df"><button class="btn" value="cancel" formnovalidate>Cerrar</button></div>
   </form>
 </dialog>
 

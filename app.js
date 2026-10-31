@@ -32,11 +32,23 @@ const today = () => isoOf(new Date());
 const diffDays = (a, b) => Math.round((parse(a) - parse(b)) / 864e5);
 const fdate = iso => iso && /^\d{4}-\d{2}-\d{2}/.test(iso) ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : (iso || "");
 const fdt = ts => { const d = new Date(ts); return `${fdate(isoOf(d))} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-const norm = s => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+const norm = s => String(s || "").trim().replace(/\s+/g, " ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+/** Clave más estricta para detectar clientes repetidos: sin tildes, mayúsculas, signos ni espacios. */
+const ckey = s => norm(s).replace(/[^a-z0-9]/g, "");
 const round2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 const num = v => v == null || v === "" ? 0 : Number(v);
 /** IVA de una línea: el monto guardado es la base imponible (sin IVA); solo se calcula si la línea lo lleva. */
 const ivaOf = d => d.iva ? round2(num(d.monto) * IVA_PCT / 100) : 0;
+/** Las ventas sin número de nota (S/NT, N/A…) solo se agrupan si son del mismo día. */
+function lev(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 3;
+  let p = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) { const c = [i]; for (let j = 1; j <= b.length; j++) c[j] = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); p = c; }
+  return p[b.length];
+}
+/** ¿Dos nombres de cliente parecen ser la misma persona? (mismas letras sin espacios/signos, o casi iguales) */
+const parecidos = (a, b) => { const x = ckey(a), y = ckey(b); return x && y && (x === y || (Math.min(x.length, y.length) >= 6 && x.replace(/\D/g, "") === y.replace(/\D/g, "") && lev(x, y) <= (x.length < 12 ? 1 : 2))); };
+const sinNumero = nota => !/\d/.test(nota || "");
 const empty = m => `<div class="empty">${m}</div>`;
 const monthIni = ym => `${ym}-01`;
 const monthFin = ym => { const [y, m] = ym.split("-").map(Number); return isoOf(new Date(y, m, 0)); };
@@ -47,7 +59,7 @@ const fechaTasa = ym => { const fin = monthFin(ym); return +fin.slice(8) >= DIA_
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 const S = {
   user: null, perfil: null, admin: false,
-  docs: [], byId: new Map(), vendedores: [], tasas: new Map(), comisiones: [], perfiles: [], clientes: new Map(), productos: new Map(),
+  docs: [], byId: new Map(), vendedores: [], tasas: new Map(), comisiones: [], perfiles: [], clientes: new Map(), clientesRaw: [], productos: new Map(), abonos: [], notas: [],
   loaded: false, tab: null, ptype: "mes", anchor: today(), channel: null
 };
 
@@ -209,22 +221,37 @@ async function fetchAll(table, order) {
 async function cargarTodo() {
   $("#dot").className = "dot";
   try {
-    const [docs, vend, tasas, coms, perfs, clis, prods] = await Promise.all([
+    const [docs, vend, tasas, coms, perfs, clis, prods, abos, nots] = await Promise.all([
       fetchAll("despachos", "fecha"), fetchAll("vendedores", "nombre"), fetchAll("tasas_bcv", "fecha"),
       fetchAll("comisiones", "mes"), S.admin ? fetchAll("perfiles", "nombre") : Promise.resolve([]),
-      fetchAll("clientes", "nombre"), fetchAll("productos", "umb")
+      fetchAll("clientes", "nombre"), fetchAll("productos", "umb"),
+      S.admin ? fetchAll("abonos", "creado_en") : Promise.resolve([]), fetchAll("notas_entrega", "emitida_en")
     ]);
     S.docs = docs.map(d => ({ ...d, cantidad: num(d.cantidad), precio: num(d.precio), monto: num(d.monto), iva: !!d.iva }));
     S.byId = new Map(S.docs.map(d => [d.id, d]));
     S.vendedores = vend; S.tasas = new Map(tasas.map(t => [t.fecha, num(t.tasa)])); S.comisiones = coms; S.perfiles = perfs;
-    S.clientes = new Map(clis.map(c => [c.clave, c])); S.productos = new Map(prods.map(p => [p.umb, p.descripcion]));
+    S.clientes = new Map(clis.map(c => [norm(c.nombre), c])); S.clientesRaw = clis; S.productos = new Map(prods.map(p => [p.umb, p.descripcion]));
+    S.abonos = abos.map(a => ({ ...a, monto: num(a.monto) })); S.notas = nots;
     S.loaded = true; $("#dot").className = "dot on"; $("#banner").hidden = true;
     fillSelects(); render();
+    if (S.admin && !S.tasaAuto) { S.tasaAuto = true; tasaAutomatica(); }
   } catch (err) {
     $("#dot").className = "dot off";
     $("#banner").textContent = "No fue posible cargar la información: " + errTxt(err) + ". Verifique su conexión a internet.";
     $("#banner").hidden = false;
   }
+}
+/** Tasa BCV automática: al abrir la aplicación (administrador), si la tasa del día no está registrada, se consulta y se guarda. */
+async function tasaAutomatica() {
+  try {
+    const hoy = today(); if (S.tasas.get(hoy)) return;
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
+    const j = await (await fetch("https://ve.dolarapi.com/v1/dolares/oficial", { signal: ctl.signal })).json(); clearTimeout(t);
+    const tasa = num(j.promedio), fecha = String(j.fechaActualizacion || "").slice(0, 10) || hoy;
+    if (!(tasa > 0) || tasa > 100000 || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || fecha > hoy || S.tasas.get(fecha)) return;
+    const { error } = await sb.from("tasas_bcv").insert({ fecha, tasa, fuente: "BCV (automática)" });
+    if (!error) { S.tasas.set(fecha, tasa); toast(`Tasa BCV del ${fdate(fecha)} registrada automáticamente: Bs. ${nf4.format(tasa)}.`); }
+  } catch {}
 }
 let reloadT = null;
 function suscribir() {
@@ -233,6 +260,7 @@ function suscribir() {
     .on("postgres_changes", { event: "*", schema: "public", table: "despachos" }, () => { clearTimeout(reloadT); reloadT = setTimeout(cargarTodo, 400); })
     .on("postgres_changes", { event: "*", schema: "public", table: "comisiones" }, () => { clearTimeout(reloadT); reloadT = setTimeout(cargarTodo, 400); })
     .on("postgres_changes", { event: "*", schema: "public", table: "tasas_bcv" }, () => { clearTimeout(reloadT); reloadT = setTimeout(cargarTodo, 400); })
+    .on("postgres_changes", { event: "*", schema: "public", table: "abonos" }, () => { clearTimeout(reloadT); reloadT = setTimeout(cargarTodo, 400); })
     .subscribe(st => { if (st === "SUBSCRIBED") $("#dot").className = "dot on"; if (st === "CHANNEL_ERROR" || st === "TIMED_OUT") $("#dot").className = "dot off"; });
 }
 
@@ -269,12 +297,31 @@ function render() {
   ({ reportes: renderReportes, registro: renderRegistro, cobranza: renderCobranza, comisiones: renderComisiones, misventas: renderMisVentas, admin: renderAdmin }[S.tab] || (() => {}))();
   refreshFormLists();
 }
+/* ---- Saldos por cobrar: por nota, con IVA y descontando los abonos ---- */
+const notaKey = d => `${norm(d.cliente)}|${d.nota}|${mon(d)}${sinNumero(d.nota) ? "|" + d.fecha : ""}`;
+function abonosDe(g) {
+  return S.abonos.filter(a => !a.anulado && a.nota === g.nota && a.moneda === g.m && norm(a.cliente) === norm(g.cliente) && (!sinNumero(g.nota) || a.fecha_despacho === g.fecha));
+}
+/** Una fila por nota pendiente de cobro: total con IVA, abonado y saldo. */
+function saldosPendientes() {
+  const m = new Map();
+  for (const d of S.docs) {
+    if (d.status !== "DESPACHADO") continue;
+    const k = notaKey(d), g = m.get(k) || { key: k, cliente: d.cliente, nota: d.nota, m: mon(d), fecha: d.fecha, lines: [] };
+    g.lines.push(d); m.set(k, g);
+  }
+  return [...m.values()].map(g => {
+    const t = totalesIva(g.lines.map(d => ({ total: d.monto, iva: d.iva })));
+    const abonado = round2(abonosDe(g).reduce((a, x) => a + x.monto, 0));
+    return { ...g, base: t.sub, iva: t.iva, total: t.total, abonado, saldo: Math.max(0, round2(t.total - abonado)), vence: g.lines.map(venceOf).sort()[0], vencido: g.lines.some(isVencido) };
+  });
+}
 function vencidos() {
   const g = new Map();
-  for (const d of S.docs) {
-    if (!isVencido(d)) continue;
-    const k = norm(d.cliente), o = g.get(k) || { cliente: d.cliente, USD: 0, BS: 0, vence: venceOf(d) };
-    o[mon(d)] += d.monto; if (venceOf(d) < o.vence) o.vence = venceOf(d); g.set(k, o);
+  for (const s of saldosPendientes()) {
+    if (!s.vencido || !(s.saldo > 0)) continue;
+    const k = norm(s.cliente), o = g.get(k) || { cliente: s.cliente, USD: 0, BS: 0, vence: s.vence };
+    o[s.m] += s.saldo; if (s.vence < o.vence) o.vence = s.vence; g.set(k, o);
   }
   return [...g.values()];
 }
@@ -370,28 +417,30 @@ function renderRegistro() {
 function renderCobranza() {
   if (!S.loaded) { $("#tablaCobro").innerHTML = empty("Cargando información…"); return; }
   const g = new Map();
-  for (const d of S.docs) {
-    if (d.status !== "DESPACHADO") continue;
-    const k = norm(d.cliente), o = g.get(k) || { cliente: d.cliente, USD: 0, BS: 0, vU: 0, vB: 0, lineas: [], notas: new Set(), vence: venceOf(d), conds: new Set() };
-    o[mon(d)] += d.monto; if (isVencido(d)) o[mon(d) === "BS" ? "vB" : "vU"] += d.monto;
-    o.lineas.push(d); o.notas.add(d.nota); o.conds.add(COND_TXT[condOf(d)]); if (venceOf(d) < o.vence) o.vence = venceOf(d); g.set(k, o);
+  for (const s of saldosPendientes()) {
+    const k = norm(s.cliente), o = g.get(k) || { cliente: s.cliente, key: k, USD: 0, BS: 0, vU: 0, vB: 0, lineas: 0, notas: [], vence: s.vence, conds: new Set(), abonado: { USD: 0, BS: 0 } };
+    o[s.m] += s.saldo; if (s.vencido) o[s.m === "BS" ? "vB" : "vU"] += s.saldo;
+    o.lineas += s.lines.length; o.notas.push(s); o.abonado[s.m] += s.abonado;
+    s.lines.forEach(d => o.conds.add(COND_TXT[condOf(d)])); if (s.vence < o.vence) o.vence = s.vence; g.set(k, o);
   }
   const list = [...g.values()].sort((a, b) => a.vence.localeCompare(b.vence));
   const T = list.reduce((a, o) => ({ USD: a.USD + o.USD, BS: a.BS + o.BS, vU: a.vU + o.vU, vB: a.vB + o.vB }), { USD: 0, BS: 0, vU: 0, vB: 0 });
   $("#cobroKpis").innerHTML = `
-    <div class="kpi k-pend"><span class="lbl">Total por cobrar · USD</span><span class="val">${money(T.USD, "USD")}</span></div>
-    <div class="kpi k-pend"><span class="lbl">Total por cobrar · Bs. BCV</span><span class="val">${money(T.BS, "BS")}</span></div>
+    <div class="kpi k-pend"><span class="lbl">Total por cobrar · USD</span><span class="val">${money(T.USD, "USD")}</span><span class="sub">Con IVA y menos abonos</span></div>
+    <div class="kpi k-pend"><span class="lbl">Total por cobrar · Bs. BCV</span><span class="val">${money(T.BS, "BS")}</span><span class="sub">Con IVA y menos abonos</span></div>
     <div class="kpi k-bad"><span class="lbl">Vencido · USD</span><span class="val">${money(T.vU, "USD")}</span></div>
     <div class="kpi k-bad"><span class="lbl">Vencido · Bs. BCV</span><span class="val">${money(T.vB, "BS")}</span></div>`;
   if (!list.length) { $("#tablaCobro").innerHTML = empty("No hay cuentas pendientes por cobrar."); return; }
-  $("#tablaCobro").innerHTML = `<table><thead><tr><th>Cliente</th><th>Notas / facturas pendientes</th><th>Condición</th><th class="n">Pendiente USD</th><th class="n">Pendiente Bs. BCV</th><th>Vence</th><th>Situación</th><th></th></tr></thead><tbody>
+  const conAbonos = new Set(S.abonos.map(a => norm(a.cliente)));
+  const notaChip = s => `<span class="code">${esc(s.nota)}</span>${s.iva ? ` <span class="chip PORVENCER" title="Incluye IVA ${nf.format(s.iva)}">+IVA</span>` : ""}${s.abonado ? `<span class="sub">abonó ${money(s.abonado, s.m)} · saldo ${money(s.saldo, s.m)}</span>` : ""}`;
+  $("#tablaCobro").innerHTML = `<table><thead><tr><th>Cliente</th><th>Notas / facturas pendientes</th><th>Condición</th><th class="n">Por cobrar USD</th><th class="n">Por cobrar Bs. BCV</th><th>Vence</th><th>Situación</th><th></th></tr></thead><tbody>
   ${list.map(o => { const dd = diffDays(today(), o.vence), venc = dd > 0; return `<tr class="${venc ? "vencido" : ""}">
-    <td><b>${esc(o.cliente)}</b><span class="sub">${o.lineas.length} ${o.lineas.length === 1 ? "línea" : "líneas"}</span></td>
-    <td>${[...o.notas].map(n => `<span class="code">${esc(n)}</span>`).join(" ")}</td><td>${[...o.conds].join(", ")}</td>
+    <td><b>${esc(o.cliente)}</b><span class="sub">${o.lineas} ${o.lineas === 1 ? "línea" : "líneas"}</span></td>
+    <td>${o.notas.map(notaChip).join("<br>")}</td><td>${[...o.conds].join(", ")}</td>
     <td class="n ${o.vU ? "red" : ""}">${o.USD ? nf.format(o.USD) : "—"}</td><td class="n ${o.vB ? "red" : ""}">${o.BS ? nf.format(o.BS) : "—"}</td>
     <td class="num" style="text-align:left">${fdate(o.vence)}</td>
     <td>${venc ? `<span class="chip VENCIDO">VENCIDO · ${dd} ${dd === 1 ? "día" : "días"} de atraso</span>` : `<span class="chip PORVENCER">${dd === 0 ? "Vence hoy" : `Vence en ${-dd} ${dd === -1 ? "día" : "días"}`}</span>`}</td>
-    <td><button class="btn small primary" data-paycli="${esc(norm(o.cliente))}">Registrar pago</button></td></tr>`; }).join("")}
+    <td style="white-space:nowrap"><button class="btn small primary" data-paycli="${esc(o.key)}">Registrar pago</button>${conAbonos.has(o.key) ? ` <button class="btn small" data-abonos="${esc(o.key)}">Abonos</button>` : ""}</td></tr>`; }).join("")}
   </tbody><tfoot><tr><td colspan="3">${list.length} clientes con saldo pendiente</td><td class="n">${nf.format(T.USD)}</td><td class="n">${nf.format(T.BS)}</td><td colspan="3"></td></tr></tfoot></table>`;
 }
 
@@ -538,12 +587,34 @@ function renderAdmin() {
       <td><input type="checkbox" data-uact="${p.id}" ${p.activo ? "checked" : ""} ${p.id === S.user.id ? "disabled" : ""} aria-label="Activo"></td></tr>`).join("")}</tbody></table>` : empty("Sin usuarios.");
   $("#aVendedores").innerHTML = S.vendedores.length ? `<table><thead><tr><th>Vendedor</th><th class="n">Ventas registradas</th><th>Activo</th></tr></thead><tbody>
     ${S.vendedores.map(v => `<tr><td>${esc(v.nombre)}</td><td class="n">${S.docs.filter(d => d.vendedor_id === v.id).length}</td><td><input type="checkbox" data-vact="${v.id}" ${v.activo ? "checked" : ""} aria-label="Activo"></td></tr>`).join("")}</tbody></table>` : empty("Agregue el primer vendedor.");
+  renderClientesDup();
   const tasas = [...S.tasas].sort((a, b) => b[0].localeCompare(a[0]));
   $("#aTasas").innerHTML = tasas.length ? `<table><thead><tr><th>Fecha</th><th class="n">Bs. por USD</th></tr></thead><tbody>${tasas.map(([f, t]) => `<tr><td>${fdate(f)}</td><td class="n">${nf4.format(t)}</td></tr>`).join("")}</tbody></table>` : empty("Sin tasas registradas.");
   if (!$("#aTasaFecha").value) $("#aTasaFecha").value = today();
   if (!$("#aProductos").contains(document.activeElement))
     $("#aProductos").innerHTML = `<table><thead><tr><th>UMB</th><th>Descripción en la nota de entrega</th></tr></thead><tbody>
     ${UMBS.map(u => `<tr><td><span class="code">${esc(u)}</span></td><td><input data-prod="${esc(u)}" value="${esc(descProd(u))}" aria-label="Descripción de ${esc(u)}"></td></tr>`).join("")}</tbody></table>`;
+}
+let dupGrupos = [];
+function renderClientesDup() {
+  if (!$("#aClientes") || $("#aClientes").contains(document.activeElement)) return;
+  const cnt = new Map(); S.docs.forEach(d => cnt.set(d.cliente, (cnt.get(d.cliente) || 0) + 1));
+  const nombres = [...cnt.keys()].sort((a, b) => a.localeCompare(b)), usado = new Set(); dupGrupos = [];
+  nombres.forEach((n, i) => {
+    if (usado.has(n)) return;
+    const g = [n]; nombres.slice(i + 1).forEach(m => { if (!usado.has(m) && g.some(x => parecidos(x, m))) g.push(m); });
+    if (g.length > 1) { g.forEach(x => usado.add(x)); dupGrupos.push(g); }
+  });
+  $("#aClientes").innerHTML = dupGrupos.length ? `<table><thead><tr><th>Nombres encontrados</th><th>Nombre correcto</th><th></th></tr></thead><tbody>${dupGrupos.map((g, i) => `<tr><td>${g.map(n => `${esc(n)} <span class="muted">(${cnt.get(n)} ${cnt.get(n) === 1 ? "línea" : "líneas"})</span>`).join("<br>")}</td>
+    <td><select data-dupsel="${i}">${g.map(n => `<option value="${esc(n)}"${n === g.slice().sort((a, b) => cnt.get(b) - cnt.get(a))[0] ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></td>
+    <td><button class="btn small primary" data-unificar="${i}">Unificar</button></td></tr>`).join("")}</tbody></table>` : empty("No se encontraron clientes con nombres parecidos.");
+}
+async function unificarClientes(i) {
+  const g = dupGrupos[i], destino = document.querySelector(`[data-dupsel="${i}"]`)?.value; if (!g || !destino) return;
+  if (!confirm(`¿Unificar ${g.length} nombres en «${destino}»?\nTodas las ventas, notas y abonos pasarán a ese nombre.`)) return;
+  const { data, error } = await sb.rpc("unificar_cliente", { p_origenes: g.filter(n => n !== destino), p_destino: destino });
+  if (error) return msg("#aCliMsg", "err", "No se pudo unificar: " + errTxt(error));
+  toast(`Clientes unificados en «${destino}» (${data} ${data === 1 ? "línea actualizada" : "líneas actualizadas"}).`); cargarTodo();
 }
 async function cargarHistorial() {
   let q = sb.from("historial").select("*").order("fecha", { ascending: false }).limit(300);
@@ -563,7 +634,7 @@ async function cargarEventos() {
   const { data, error } = await sb.from("eventos").select("*").order("fecha", { ascending: false }).limit(200);
   if (error) { $("#aEventos").innerHTML = empty("No se pudo cargar la actividad."); return; }
   const nom = id => S.perfiles.find(p => p.id === id)?.nombre || id;
-  const TXT = { inicio_sesion: "Inició sesión", cierre_sesion: "Cerró sesión", exportacion: "Descargó un reporte", comision_pagada: "Registró pago de comisión", comision_anulada: "Anuló pago de comisión", tasa_guardada: "Guardó tasa BCV", nota_entrega: "Generó nota de entrega" };
+  const TXT = { inicio_sesion: "Inició sesión", cierre_sesion: "Cerró sesión", exportacion: "Descargó un reporte", comision_pagada: "Registró pago de comisión", comision_anulada: "Anuló pago de comisión", tasa_guardada: "Guardó tasa BCV", nota_entrega: "Generó nota de entrega", nota_anulada: "Anuló nota de entrega", abono_registrado: "Registró abono", abono_anulado: "Anuló abono", clientes_unificados: "Unificó clientes" };
   $("#aEventos").innerHTML = data.length ? `<table><thead><tr><th>Fecha y hora</th><th>Usuario</th><th>Actividad</th><th>Detalle</th></tr></thead><tbody>
     ${data.map(e => `<tr><td class="num" style="text-align:left">${fdt(e.fecha)}</td><td>${esc(nom(e.usuario))}</td><td>${TXT[e.tipo] || esc(e.tipo)}</td><td><pre class="json">${esc(e.detalle ? JSON.stringify(e.detalle) : "")}</pre></td></tr>`).join("")}</tbody></table>` : empty("Sin actividad registrada.");
 }
@@ -599,7 +670,7 @@ function fillSelects() {
   $("#eVend").innerHTML = `<option value="">— Ninguno —</option>` + S.vendedores.map(v => `<option value="${v.id}">${esc(v.nombre)}</option>`).join("");
 }
 async function refreshFormLists() {
-  const clients = [...new Map([...S.docs.map(d => [norm(d.cliente), d.cliente]), ...[...S.clientes.values()].map(c => [c.clave, c.nombre])]).values()].sort((a, b) => a.localeCompare(b));
+  const clients = [...new Map([...S.docs.map(d => [norm(d.cliente), d.cliente]), ...[...S.clientes.values()].map(c => [norm(c.nombre), c.nombre])]).values()].sort((a, b) => a.localeCompare(b));
   const dl = clients.map(c => `<option value="${esc(c)}"></option>`).join("");
   if ($("#listaClientes").innerHTML !== dl) $("#listaClientes").innerHTML = dl;
   if (!notaTouched && S.loaded && S.tab === "nuevo") { const { data } = await sb.rpc("siguiente_nota"); if (data && !notaTouched) $("#nNota").value = data; }
@@ -700,11 +771,24 @@ $("#formNuevo").addEventListener("submit", async ev => {
     filas.push({ fecha, cliente, cantidad, umb, precio, moneda, status, fecha_pago, referencia, nota: /^S\/?NT$/i.test(nota) ? "S/NT" : nota, responsable, observacion: $("#nObs").value.trim() || null, condicion, vendedor_id, iva: el.querySelector(".iva").checked });
   }
   if (!filas.length) return fail("Agregue al menos un producto.");
+  if (!S.clientes.has(norm(cliente)) && !S.docs.some(d => norm(d.cliente) === norm(cliente))) {
+    const nombres = [...new Set([...S.docs.map(d => d.cliente), ...[...S.clientes.values()].map(c => c.nombre)])];
+    const sim = nombres.find(n => parecidos(n, cliente));
+    if (sim && confirm(`Ya existe un cliente llamado «${sim}», muy parecido a «${cliente}».\n\nAceptar = es el mismo cliente (se usa «${sim}»).\nCancelar = es un cliente distinto (se crea como nuevo).`)) {
+      $("#nCliente").value = sim; filas.forEach(f => f.cliente = sim);
+    }
+  }
   $("#nSave").disabled = true;
+  // Número correlativo: lo asigna la base de datos en el momento de guardar, así dos personas nunca reciben el mismo.
+  if (!notaTouched && /^N\/E\d+$/.test(nota)) {
+    const { data: asignada, error: errN } = await sb.rpc("reservar_nota");
+    if (errN || !asignada) { $("#nSave").disabled = false; return fail("No se pudo asignar el número de nota: " + errTxt(errN)); }
+    filas.forEach(f => f.nota = asignada);
+  }
   const { data: creadas, error } = await sb.from("despachos").insert(filas).select("id");
   $("#nSave").disabled = false;
   if (error) return fail("No se pudo guardar: " + errTxt(error));
-  await guardarCliente(cliente, { rif: $("#nRif").value, telefono: $("#nTel").value, direccion: $("#nDir").value });
+  await guardarCliente(filas[0].cliente, { rif: $("#nRif").value, telefono: $("#nTel").value, direccion: $("#nDir").value });
   toast(`Despacho ${filas[0].nota} registrado (${filas.length} ${filas.length === 1 ? "producto" : "productos"}).`);
   $("#lines").innerHTML = ""; ["#nObs", "#nCliente", "#nRef", "#nFPago", "#nRif", "#nTel", "#nDir"].forEach(s => $(s).value = "");
   $$("input[name=cond]").forEach(r => r.checked = false);
@@ -724,7 +808,7 @@ async function guardarCliente(nombre, datos) {
     ? await sb.from("clientes").update(patch).eq("id", previo.id).select().maybeSingle()
     : await sb.from("clientes").insert({ nombre: nombre.trim().replace(/\s+/g, " "), ...patch }).select().maybeSingle();
   if (error) return toast("No se pudieron guardar los datos del cliente: " + errTxt(error));
-  if (data) S.clientes.set(data.clave, data);
+  if (data) S.clientes.set(norm(data.nombre), data);
 }
 $("#nCliente").addEventListener("change", () => {
   const c = S.clientes.get(norm($("#nCliente").value)); if (!c) return;
@@ -733,7 +817,6 @@ $("#nCliente").addEventListener("change", () => {
 
 /* ====================== Nota de entrega ====================== */
 let notaCtx = null;
-const sinNumero = nota => !/\d/.test(nota || "");
 /** Líneas que forman la misma nota de entrega (mismo N° y cliente; si no tiene número, además el mismo día). */
 function lineasDeNota(d) {
   return S.docs.filter(x => x.nota === d.nota && norm(x.cliente) === norm(d.cliente) && (!sinNumero(d.nota) || x.fecha === d.fecha))
@@ -803,21 +886,46 @@ async function generarNota() {
   });
   const total = totalesIva(lineas).total;
   const totalBs = round2(rows.filter(d => mon(d) === "BS").reduce((a, d) => a + d.monto, 0));
-  const html = Documentos.notaHTML({
-    nota: d0.nota, fecha: d0.fecha, emitida: new Date(), condicion: condOf(d0), dias: DIAS_CREDITO, moneda,
+  const emitidaEn = new Date().toISOString();
+  const datos = {
+    nota: d0.nota, fecha: d0.fecha, emitida: emitidaEn, condicion: condOf(d0), dias: DIAS_CREDITO, moneda,
     cliente: { nombre: d0.cliente, rif: $("#ntRif").value.trim(), telefono: $("#ntTel").value.trim(), direccion: $("#ntDir").value.trim() },
     lineas, ivaPct: IVA_PCT, conversion: convertir ? { tasa, fecha: tasaFecha, totalOriginal: totalBs } : null,
     observacion: $("#ntObs").value.trim(), referencia: [...new Set(rows.map(d => d.referencia).filter(Boolean))].join(" / "),
     despachadoPor: S.perfil.nombre
-  });
+  };
+  const previa = notaGuardada(d0);
   const { error } = await sb.from("notas_entrega").upsert({
     nota: d0.nota, cliente: d0.cliente, fecha: d0.fecha, moneda, moneda_venta: mon(d0), tasa_bcv: convertir ? tasa : null,
-    total, emitida_en: new Date().toISOString(), emitida_por: S.user.id
+    total, emitida_en: emitidaEn, emitida_por: S.user.id, contenido: datos, veces: (previa?.veces || 0) + 1
   }, { onConflict: "nota,cliente,fecha" });
-  if (error) toast("La nota se generó, pero no se pudo registrar su emisión: " + errTxt(error));
+  if (error) toast("La nota se generó, pero no se pudo guardar su copia fija: " + errTxt(error));
+  else { const { data: fresh } = await sb.from("notas_entrega").select("*").eq("nota", d0.nota).eq("fecha", d0.fecha); if (fresh) { S.notas = S.notas.filter(x => !(x.nota === d0.nota && x.fecha === d0.fecha && norm(x.cliente) === norm(d0.cliente))).concat(fresh.filter(x => norm(x.cliente) === norm(d0.cliente))); } }
   logEvento("nota_entrega", { nota: d0.nota, cliente: d0.cliente, moneda, total });
   $("#ntSi").disabled = false; $("#dlgNota").close();
-  Documentos.abrir(html, { titulo: `Nota de entrega ${d0.nota} · ${d0.cliente}`, archivo: `Nota de entrega ${d0.nota} - ${d0.cliente}.pdf` });
+  mostrarNota(datos, notaGuardada(d0));
+}
+/** Copia fija (guardada) de la nota emitida para esta venta, si existe. */
+function notaGuardada(d) { return S.notas.find(x => x.nota === d.nota && x.fecha === d.fecha && norm(x.cliente) === norm(d.cliente)) || null; }
+/** Muestra la nota tal como se emitió; el administrador puede reemitirla o anularla. */
+function mostrarNota(datos, reg) {
+  const anulada = !!reg?.anulada, d0 = { nota: datos.nota, cliente: datos.cliente.nombre, fecha: datos.fecha };
+  const html = Documentos.notaHTML({ ...datos, anulada, anuladaMotivo: reg?.anulada_motivo });
+  const acciones = [];
+  if (S.admin && reg && !anulada) {
+    acciones.push({ texto: "Anular esta nota", cls: "danger", fn: () => anularNotaUI(reg) });
+    acciones.push({ texto: "Volver a emitir con datos nuevos", fn: () => { Documentos.cerrar(); const rows = lineasDeNota({ nota: d0.nota, cliente: d0.cliente, fecha: d0.fecha }); if (rows.length) abrirNota(rows, false); } });
+  }
+  Documentos.abrir(html, {
+    titulo: `Nota de entrega ${d0.nota} · ${d0.cliente}${anulada ? " (ANULADA)" : ""}`, archivo: `Nota de entrega ${d0.nota} - ${d0.cliente}.pdf`, acciones,
+    aviso: anulada ? `Nota anulada${reg.anulada_motivo ? ": " + reg.anulada_motivo : ""}.` : reg ? `Copia fija emitida el ${fdate(String(reg.emitida_en).slice(0, 10))}${reg.veces > 1 ? ` (reemitida ${reg.veces - 1} ${reg.veces === 2 ? "vez" : "veces"})` : ""}. Muestra exactamente lo que se entregó al cliente.` : ""
+  });
+}
+async function anularNotaUI(reg) {
+  const motivo = prompt(`Motivo para anular la nota ${reg.nota} (queda registrado):`); if (!motivo || !motivo.trim()) return;
+  const { error } = await sb.rpc("anular_nota", { p_id: reg.id, p_motivo: motivo.trim() });
+  if (error) return toast("No se pudo anular: " + errTxt(error));
+  Documentos.cerrar(); await cargarTodo(); toast(`Nota ${reg.nota} anulada. Las ventas siguen registradas; corrija o elimine las líneas si corresponde.`);
 }
 $("#addLine").addEventListener("click", addLine);
 $("#lines").addEventListener("click", e => { if (e.target.closest("[data-rm]")) { e.target.closest(".line").remove(); recalc(); } });
@@ -831,29 +939,69 @@ $$("input[name=cond]").forEach(r => r.addEventListener("change", () => { updateV
 $("#nStatus").addEventListener("change", () => statusTouched = true);
 ["#nFPago", "#nRef"].forEach(s => $(s).addEventListener("input", autoStatus));
 
-/* ====================== Registrar pago ====================== */
-let pagoRows = [];
+/* ====================== Registrar pago y abonos ====================== */
+let pagoNotas = [];
 function openPago(rows, titulo) {
-  pagoRows = rows.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const keys = new Set(rows.map(notaKey));
+  pagoNotas = saldosPendientes().filter(s => keys.has(s.key)).sort((a, b) => a.vence.localeCompare(b.vence));
   $("#pagoTitulo").textContent = titulo;
-  $("#pagoLineas").innerHTML = pagoRows.map((d, i) => `<label><input type="checkbox" data-i="${i}" checked><span>${fdate(d.fecha)} · <span class="code">${esc(d.nota)}</span> · ${qf.format(d.cantidad)} ${esc(d.umb)} ${isVencido(d) ? `<span class="chip VENCIDO">VENCIDO</span>` : ""}</span><span class="num">${moneyHTML(d.monto, mon(d))}</span></label>`).join("");
+  $("#pagoLineas").innerHTML = pagoNotas.map((s, i) => `<label style="grid-column:1/-1"><input type="checkbox" data-i="${i}" checked><span><span class="code">${esc(s.nota)}</span> · ${fdate(s.fecha)} · ${s.lines.length} ${s.lines.length === 1 ? "línea" : "líneas"}${s.iva ? ` · incluye IVA ${nf.format(s.iva)}` : ""}${s.vencido ? ` <span class="chip VENCIDO">VENCIDO</span>` : ""}${s.abonado ? `<span class="sub">Total ${money(s.total, s.m)} · ya abonó ${money(s.abonado, s.m)}</span>` : ""}</span><span class="num">${moneyHTML(s.saldo, s.m)}</span></label>`).join("");
   $("#pgFecha").value = today(); $("#pgRef").value = ""; $("#pgMsg").hidden = true; pagoTotal(); $("#dlgPago").showModal();
 }
-const pagoSel = () => $$("#pagoLineas input:checked").map(c => pagoRows[+c.dataset.i]);
-function pagoTotal() { const t = { USD: 0, BS: 0 }; pagoSel().forEach(d => t[mon(d)] += d.monto); $("#pgTotal").textContent = [t.USD ? money(t.USD, "USD") : "", t.BS ? money(t.BS, "BS") : ""].filter(Boolean).join(" + ") || "Ninguna línea seleccionada"; }
+const pagoSel = () => $$("#pagoLineas input:checked").map(c => pagoNotas[+c.dataset.i]);
+function pagoTotal() {
+  const sel = pagoSel(), t = { USD: 0, BS: 0 }; sel.forEach(s => t[s.m] += s.saldo);
+  $("#pgTotal").textContent = [t.USD ? money(t.USD, "USD") : "", t.BS ? money(t.BS, "BS") : ""].filter(Boolean).join(" + ") || "Ninguna nota seleccionada";
+  const uno = sel.length === 1;
+  $("#pgMontoWrap").hidden = !uno; $("#pgInfo").hidden = !uno;
+  if (uno) {
+    $("#pgMonto").value = sel[0].saldo.toFixed(2); $("#pgMonto").max = sel[0].saldo;
+    $("#pgMontoMon").textContent = "(" + (sel[0].m === "BS" ? "Bs." : "USD") + ")";
+    $("#pgInfo").textContent = "Deje el saldo completo para cobrar toda la nota, o escriba un monto menor para registrar un abono. Con varias notas seleccionadas se cobra el saldo completo de cada una.";
+  }
+}
 $("#pagoLineas").addEventListener("change", pagoTotal);
 $("#formPago").addEventListener("submit", async ev => {
   if (ev.submitter?.value !== "ok") return; ev.preventDefault();
   const sel = pagoSel(), fecha_pago = $("#pgFecha").value, referencia = $("#pgRef").value.trim();
-  if (!sel.length) return msg("#pgMsg", "err", "Seleccione al menos una línea.");
+  if (!sel.length) return msg("#pgMsg", "err", "Seleccione al menos una nota.");
   const e = validFecha(fecha_pago, "fecha de pago"); if (e) return msg("#pgMsg", "err", e);
   if (!referencia) return msg("#pgMsg", "err", "Indique el número de referencia del pago.");
+  let montos = sel.map(s => s.saldo);
+  if (sel.length === 1) {
+    const m = round2(parseFloat($("#pgMonto").value));
+    if (!(m > 0)) return msg("#pgMsg", "err", "Indique el monto que paga el cliente.");
+    if (m > sel[0].saldo + 0.01) return msg("#pgMsg", "err", `El monto supera el saldo de la nota (${money(sel[0].saldo, sel[0].m)}).`);
+    montos = [m];
+  }
   $("#pgSave").disabled = true;
-  const { error } = await sb.from("despachos").update({ status: "VALIDADO", fecha_pago, referencia }).in("id", sel.map(d => d.id)).eq("status", "DESPACHADO");
+  let hechas = 0, completas = 0, parcial = 0, fallo = null;
+  for (let i = 0; i < sel.length; i++) {
+    const { data, error } = await sb.rpc("registrar_abono", { p_ids: sel[i].lines.map(d => d.id), p_monto: montos[i], p_fecha: fecha_pago, p_referencia: referencia, p_iva: IVA_PCT });
+    if (error) { fallo = error; break; }
+    hechas++; if (data?.completo) completas++; else parcial++;
+  }
   $("#pgSave").disabled = false;
-  if (error) return msg("#pgMsg", "err", "No se pudo registrar el pago: " + errTxt(error));
-  $("#dlgPago").close(); toast(`Pago registrado: ${sel.length} ${sel.length === 1 ? "línea pasa" : "líneas pasan"} a VALIDADO.`); cargarTodo();
+  if (fallo) { if (hechas) cargarTodo(); return msg("#pgMsg", "err", (hechas ? `Se registraron ${hechas} de ${sel.length} notas. ` : "") + "No se pudo registrar el pago: " + errTxt(fallo)); }
+  $("#dlgPago").close();
+  toast(parcial ? `Abono registrado. La nota queda con saldo pendiente.` : `Pago registrado: ${completas} ${completas === 1 ? "nota pasa" : "notas pasan"} a VALIDADO.`); cargarTodo();
 });
+
+/* ---- Lista de abonos de un cliente ---- */
+let abCliente = "";
+function abrirAbonos(key) {
+  abCliente = key; const lista = S.abonos.filter(a => norm(a.cliente) === key).sort((a, b) => b.fecha.localeCompare(a.fecha) || String(b.creado_en).localeCompare(String(a.creado_en)));
+  $("#abTitulo").textContent = "Abonos · " + (lista[0]?.cliente || "");
+  $("#abMsg").hidden = true;
+  $("#abLista").innerHTML = lista.length ? `<table><thead><tr><th>Fecha</th><th>Nota</th><th class="n">Monto</th><th>Referencia</th><th>Estado</th><th></th></tr></thead><tbody>${lista.map(a => `<tr${a.anulado ? ' style="opacity:.55"' : ""}><td class="num" style="text-align:left">${fdate(a.fecha)}</td><td><span class="code">${esc(a.nota)}</span></td><td class="n">${moneyHTML(a.monto, a.moneda === "BS" ? "BS" : "USD")}</td><td>${esc(a.referencia)}</td><td>${a.anulado ? `<span class="chip VENCIDO">ANULADO</span><span class="sub">${esc(a.anulado_motivo || "")}</span>` : a.completo_ids ? `<span class="chip VALIDADO">Cerró la nota</span>` : "Abono"}</td><td>${a.anulado ? "" : `<button class="btn small danger" type="button" data-anabono="${a.id}">Anular</button>`}</td></tr>`).join("")}</tbody></table>` : empty("Este cliente no tiene abonos registrados.");
+  if (!$("#dlgAbonos").open) $("#dlgAbonos").showModal();
+}
+async function anularAbono(id) {
+  const motivo = prompt("Motivo para anular este abono (queda registrado):"); if (!motivo || !motivo.trim()) return;
+  const { error } = await sb.rpc("anular_abono", { p_id: id, p_motivo: motivo.trim() });
+  if (error) return msg("#abMsg", "err", "No se pudo anular: " + errTxt(error));
+  await cargarTodo(); abrirAbonos(abCliente); toast("Abono anulado. Queda constancia en el historial.");
+}
 
 /* ====================== Editar ====================== */
 let editId = null;
@@ -901,9 +1049,12 @@ let armed = null;
 document.addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t) { if (armed) { armed.classList.remove("armed"); armed.textContent = "Eliminar"; armed = null; } return; }
   if (t.dataset.pay) { const d = S.byId.get(t.dataset.pay); if (d) openPago(S.docs.filter(x => x.status === "DESPACHADO" && x.nota === d.nota && norm(x.cliente) === norm(d.cliente)), `Registrar pago · ${d.nota} · ${d.cliente}`); }
+  if (t.dataset.unificar) unificarClientes(+t.dataset.unificar);
+  if (t.dataset.abonos) abrirAbonos(t.dataset.abonos);
+  if (t.dataset.anabono) anularAbono(t.dataset.anabono);
   if (t.dataset.paycli) { const rows = S.docs.filter(x => x.status === "DESPACHADO" && norm(x.cliente) === t.dataset.paycli); if (rows.length) openPago(rows, "Registrar pago · " + rows[0].cliente); }
   if (t.dataset.edit) openEdit(t.dataset.edit);
-  if (t.dataset.nota) { const d = S.byId.get(t.dataset.nota); if (d) abrirNota(lineasDeNota(d), false); }
+  if (t.dataset.nota) { const d = S.byId.get(t.dataset.nota); if (d) { const reg = notaGuardada(d); if (reg?.contenido) mostrarNota(reg.contenido, reg); else abrirNota(lineasDeNota(d), false); } }
   if (t.dataset.pagarcom) abrirPagoComision(t.dataset.pagarcom);
   if (t.dataset.anular) { const p = S.comisiones.find(c => c.id === t.dataset.anular); anularId = p.id; $("#anSub").textContent = `${vendName(p.vendedor_id)} · ${monthName(p.mes.slice(0, 7))} · ${money(p.comision_bs, "BS")}`; $("#anMotivo").value = ""; $("#anMsg").hidden = true; $("#dlgAnular").showModal(); }
   if (t.dataset.del) {

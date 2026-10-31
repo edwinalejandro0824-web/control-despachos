@@ -76,6 +76,9 @@ const CSS_NOTA = `
 .ne-firmas{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:26px;font-size:12px}
 .ne-firmas div{border-top:1.5px solid #111;padding-top:4px;text-align:center}
 .ne-firmas small{display:block;color:#444;margin-top:2px}
+.ne{position:relative}
+.ne-anul{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:5}
+.ne-anul span{font:900 120px Arial;color:rgba(200,16,46,.28);border:10px solid rgba(200,16,46,.28);padding:6px 30px;border-radius:14px;transform:rotate(-24deg);letter-spacing:6px}
 .ne-pie{display:flex;justify-content:space-between;gap:10px;margin-top:14px;font-size:10.5px;color:#444;border-top:1px solid #bbb;padding-top:5px}
 `;
 
@@ -99,7 +102,8 @@ function notaHTML(n) {
     n.conversion ? `Montos expresados en USD a tasa BCV Bs. ${nf4.format(n.conversion.tasa)} del ${fdate(n.conversion.fecha)} (venta registrada por Bs. ${nf.format(n.conversion.totalOriginal)}).` : "",
     n.moneda === "BS" ? "Montos en bolívares a tasa BCV." : ""].filter(Boolean);
   const credito = n.condicion === "CREDITO";
-  return `<div class="ne"><style>${CSS_NOTA}</style>
+  const emitida = n.emitida ? new Date(n.emitida) : new Date();
+  return `<div class="ne"><style>${CSS_NOTA}</style>${n.anulada ? `<div class="ne-anul"><span>ANULADA</span></div>` : ""}
   <header class="ne-head">${logoHTML()}
     <div class="ne-emp"><h1>${esc(e.NOMBRE || "")}</h1><div class="rif">RIF: ${esc(e.RIF || "")}</div>
       <div class="dir">${esc(e.DIRECCION || "")}</div><div class="dir">Teléfono: ${esc(e.TELEFONO || "")}</div></div>
@@ -139,7 +143,7 @@ function notaHTML(n) {
     <div>Recibido por (nombre, C.I. y firma)<small>Cliente</small></div>
     <div>Entregado / despachado por${n.despachadoPor ? `: ${esc(n.despachadoPor)}` : ""}<small>${esc(e.NOMBRE || "")}</small></div>
   </div>
-  <div class="ne-pie"><span>Emitida el ${fdt(n.emitida || new Date())}</span><span>${esc(n.nota)} · ${esc(n.cliente.nombre)}</span></div>
+  <div class="ne-pie"><span>Emitida el ${fdt(emitida)}${n.anulada ? ` · ANULADA${n.anuladaMotivo ? ": " + esc(n.anuladaMotivo) : ""}` : ""}</span><span>${esc(n.nota)} · ${esc(n.cliente.nombre)}</span></div>
 </div>`;
 }
 
@@ -224,6 +228,7 @@ function dialogo() {
       <button class="btn primary" type="button" id="docPdf">Descargar PDF</button>
       <button class="btn" type="button" id="docPrint">Imprimir</button>
       <button class="btn" type="button" id="docCerrar">Cerrar</button></span></div>
+    <div class="doc-extra" id="docExtra" style="display:none;flex-wrap:wrap;gap:8px;padding:6px 14px"></div>
     <div class="doc-msg" id="docMsg" hidden></div>
     <div class="doc-vista" id="docVista"><div class="doc-hoja" id="docHoja"></div></div>`;
   document.body.append(d);
@@ -244,12 +249,14 @@ function ajustar() {
 function aviso(t) { const m = document.getElementById("docMsg"); m.textContent = t || ""; m.hidden = !t; }
 
 /** Muestra el documento en pantalla con botones para descargar el PDF o imprimir. */
-function abrir(html, { titulo, archivo }) {
+function abrir(html, { titulo, archivo, acciones, aviso: av }) {
   const d = dialogo();
   actual = { archivo: (archivo || "documento.pdf").replace(/[\\/:*?"<>|]+/g, "-") };
   d.querySelector("#docTitulo").textContent = titulo || "Documento";
   const h = d.querySelector("#docHoja"); h.style.transform = ""; h.style.height = ""; h.innerHTML = html;
-  aviso("");
+  aviso(av || "");
+  const ex = d.querySelector("#docExtra"); ex.innerHTML = ""; ex.style.display = acciones && acciones.length ? "flex" : "none";
+  (acciones || []).forEach(a => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small " + (a.cls || ""); b.textContent = a.texto; b.addEventListener("click", () => a.fn()); ex.append(b); });
   d.showModal(); requestAnimationFrame(ajustar);
   cargarLibPDF().catch(() => {});
 }
@@ -286,5 +293,5 @@ function imprimir() {
   if (!imgs.length) setTimeout(lanzar, 150); else Promise.all(imgs.map(i => new Promise(r => { i.onload = i.onerror = r; }))).then(lanzar);
 }
 
-window.Documentos = { notaHTML, reporteHTML, abrir, esc, nf, nf4, qf };
+window.Documentos = { notaHTML, reporteHTML, abrir, cerrar: () => document.getElementById("dlgDoc")?.close(), esc, nf, nf4, qf };
 })();

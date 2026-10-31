@@ -1,6 +1,6 @@
 // Guarda la aplicación para que abra rápido e instale como app.
 // Los datos nunca se guardan aquí: siempre vienen de Supabase.
-const CACHE = "despachos-v7";
+const CACHE = "despachos-v8";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "documentos.js", "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/logo.png"];
 
 self.addEventListener("install", e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())));
