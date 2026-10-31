@@ -10,6 +10,7 @@ const COND_TXT = { CONTADO: "Contado", CREDITO: "Crédito 7 días" };
 const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 const DIAS = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
 const PCT = CONFIG.COMISION_PORCENTAJE, DIAS_CREDITO = CONFIG.DIAS_CREDITO, DIA_TASA = CONFIG.DIA_TASA_COMISION;
+const IVA_PCT = CONFIG.IVA_PORCENTAJE ?? 16, CATALOGO = CONFIG.CATALOGO || {};
 
 /* ====================== Utilidades ====================== */
 const $ = s => document.querySelector(s);
@@ -34,6 +35,8 @@ const fdt = ts => { const d = new Date(ts); return `${fdate(isoOf(d))} ${pad(d.g
 const norm = s => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
 const round2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 const num = v => v == null || v === "" ? 0 : Number(v);
+/** IVA de una línea: el monto guardado es la base imponible (sin IVA); solo se calcula si la línea lo lleva. */
+const ivaOf = d => d.iva ? round2(num(d.monto) * IVA_PCT / 100) : 0;
 const empty = m => `<div class="empty">${m}</div>`;
 const monthIni = ym => `${ym}-01`;
 const monthFin = ym => { const [y, m] = ym.split("-").map(Number); return isoOf(new Date(y, m, 0)); };
@@ -58,6 +61,8 @@ const condOf = d => d.condicion === "CONTADO" ? "CONTADO" : "CREDITO";
 const venceOf = d => d.vence || addDays(d.fecha, condOf(d) === "CONTADO" ? 0 : DIAS_CREDITO);
 const isVencido = d => d.status === "DESPACHADO" && today() > venceOf(d);
 const vendName = id => S.vendedores.find(v => v.id === id)?.nombre || "";
+/** Descripción del producto en la nota: la que escribió el administrador; si no, la del catálogo; si no, el código UMB. */
+const descProd = umb => { const g = S.productos.get(umb); return g && g !== umb ? g : (CATALOGO[umb]?.desc || umb); };
 
 /** Ventas que entran en la comisión del mes `ym` para el vendedor `vid` (aún no pagadas). */
 function lineasComision(vid, ym) {
@@ -209,7 +214,7 @@ async function cargarTodo() {
       fetchAll("comisiones", "mes"), S.admin ? fetchAll("perfiles", "nombre") : Promise.resolve([]),
       fetchAll("clientes", "nombre"), fetchAll("productos", "umb")
     ]);
-    S.docs = docs.map(d => ({ ...d, cantidad: num(d.cantidad), precio: num(d.precio), monto: num(d.monto) }));
+    S.docs = docs.map(d => ({ ...d, cantidad: num(d.cantidad), precio: num(d.precio), monto: num(d.monto), iva: !!d.iva }));
     S.byId = new Map(S.docs.map(d => [d.id, d]));
     S.vendedores = vend; S.tasas = new Map(tasas.map(t => [t.fecha, num(t.tasa)])); S.comisiones = coms; S.perfiles = perfs;
     S.clientes = new Map(clis.map(c => [c.clave, c])); S.productos = new Map(prods.map(p => [p.umb, p.descripcion]));
@@ -337,7 +342,7 @@ function estadoCell(d) {
 function filaDespacho(d, acciones) {
   return `<tr class="${isVencido(d) ? "vencido" : ""}">
     <td class="num" style="text-align:left">${fdate(d.fecha)}</td><td>${esc(d.cliente)}</td><td class="n">${qf.format(d.cantidad)}</td>
-    <td><span class="code">${esc(d.umb)}</span></td><td class="n">${nf4.format(d.precio)}</td><td>${curTag(mon(d))}</td><td class="n">${moneyHTML(d.monto, mon(d))}</td>
+    <td><span class="code">${esc(d.umb)}</span></td><td class="n">${nf4.format(d.precio)}</td><td>${curTag(mon(d))}</td><td class="n">${moneyHTML(d.monto, mon(d))}${d.iva ? `<span class="sub">+ IVA ${IVA_PCT}%: ${nf.format(ivaOf(d))}</span>` : ""}</td>
     <td><span class="chip ${esc(d.status)}">${STATUS_TXT[d.status] || esc(d.status)}</span></td>
     <td class="num" style="text-align:left">${fdate(d.fecha_pago) || "—"}</td><td class="num" style="text-align:left">${esc(d.referencia) || "—"}</td>
     <td><span class="code">${esc(d.nota)}</span></td><td>${esc(d.responsable)}${d.vendedor_id ? `<span class="sub">${esc(vendName(d.vendedor_id))}</span>` : ""}</td>
@@ -538,7 +543,7 @@ function renderAdmin() {
   if (!$("#aTasaFecha").value) $("#aTasaFecha").value = today();
   if (!$("#aProductos").contains(document.activeElement))
     $("#aProductos").innerHTML = `<table><thead><tr><th>UMB</th><th>Descripción en la nota de entrega</th></tr></thead><tbody>
-    ${UMBS.map(u => `<tr><td><span class="code">${esc(u)}</span></td><td><input data-prod="${esc(u)}" value="${esc(S.productos.get(u) || u)}" aria-label="Descripción de ${esc(u)}"></td></tr>`).join("")}</tbody></table>`;
+    ${UMBS.map(u => `<tr><td><span class="code">${esc(u)}</span></td><td><input data-prod="${esc(u)}" value="${esc(descProd(u))}" aria-label="Descripción de ${esc(u)}"></td></tr>`).join("")}</tbody></table>`;
 }
 async function cargarHistorial() {
   let q = sb.from("historial").select("*").order("fecha", { ascending: false }).limit(300);
@@ -610,25 +615,50 @@ function suggestPrice(cliente, umb, moneda) {
   if (any) return { precio: any.precio, from: `Último precio usado para ${umb} (${fdate(any.fecha)})` };
   return null;
 }
+/** Precio del catálogo (brochure) sin IVA. En Bs. se convierte con la tasa BCV de la fecha del despacho. */
+function precioCatalogo(umb, moneda, fecha) {
+  const c = CATALOGO[umb]; if (!c) return null;
+  if (moneda !== "BS") return { precio: c.precio, from: "Precio de catálogo sin IVA (brochure 2026)." };
+  const t = tasaPara(fecha);
+  if (!(t.tasa > 0)) return { precio: null, from: "Venta en Bs.: falta registrar la tasa BCV (Administración › Tasas BCV) o escriba el precio en Bs." };
+  return { precio: round2(c.precio * t.tasa), from: `Catálogo USD ${nf4.format(c.precio)} × tasa BCV ${nf4.format(t.tasa)} (${fdate(t.fecha)}), sin IVA.` };
+}
 function addLine() {
   const i = ++seq, el = document.createElement("div"); el.className = "line";
-  el.innerHTML = `<label class="f">UMB <span class="req">*</span><select class="umb" id="l${i}-umb">${UMBS.map(c => `<option>${c}</option>`).join("")}</select></label>
+  const optTxt = u => CATALOGO[u] ? `${descProd(u)} (${u})` : u;
+  el.innerHTML = `<label class="f">Producto <span class="req">*</span><select class="umb" id="l${i}-umb">${UMBS.map(c => `<option value="${esc(c)}">${esc(optTxt(c))}</option>`).join("")}</select></label>
     <label class="f">Cantidad <span class="req">*</span><input class="cant" id="l${i}-cant" type="number" min="0" step="any" inputmode="decimal"></label>
-    <label class="f">Precio <span class="req">*</span><input class="precio" id="l${i}-precio" type="number" min="0" step="0.01" inputmode="decimal"></label>
+    <label class="f">Precio sin IVA <span class="req">*</span><input class="precio" id="l${i}-precio" type="number" min="0" step="0.01" inputmode="decimal"></label>
+    <label class="ivachk"><input type="checkbox" class="iva"><span>+ IVA ${IVA_PCT}%</span></label>
     <div class="monto" aria-live="polite">—</div>
     <button type="button" class="iconbtn" data-rm aria-label="Quitar producto" title="Quitar producto">✕</button><div class="hint"></div>`;
   $("#lines").append(el); fillPrice(el, true); recalc();
 }
 function fillPrice(el, force) {
   const pr = el.querySelector(".precio"); if (!force && pr.dataset.touched) return;
-  const s = suggestPrice($("#nCliente").value, el.querySelector(".umb").value, $("#nMoneda").value);
-  pr.value = s ? s.precio : ""; delete pr.dataset.touched;
-  el.querySelector(".hint").textContent = s ? s.from : "Sin precio anterior para esta UMB en esta moneda: indíquelo.";
+  const umb = el.querySelector(".umb").value, moneda = $("#nMoneda").value;
+  const s = precioCatalogo(umb, moneda, $("#nFecha").value || today()) || suggestPrice($("#nCliente").value, umb, moneda);
+  pr.value = s && s.precio != null ? s.precio : ""; delete pr.dataset.touched;
+  el.querySelector(".hint").textContent = s ? s.from : "Sin precio anterior para este producto en esta moneda: indíquelo.";
+}
+/** Totales de una lista de líneas {total, iva}: el IVA es el 16% de la base imponible (suma de las líneas con IVA). */
+function totalesIva(lineas) {
+  const sub = round2(lineas.reduce((a, l) => a + l.total, 0));
+  const baseImp = round2(lineas.filter(l => l.iva).reduce((a, l) => a + l.total, 0));
+  const iva = round2(baseImp * IVA_PCT / 100);
+  return { sub, baseImp, iva, total: round2(sub + iva) };
 }
 function recalc() {
-  let t = 0; const m = $("#nMoneda").value;
-  $$(".line").forEach(el => { const c = parseFloat(el.querySelector(".cant").value), p = parseFloat(el.querySelector(".precio").value); const v = c > 0 && p >= 0 ? round2(c * p) : null; el.querySelector(".monto").textContent = v == null ? "—" : money(v, m); t += v || 0; });
-  $("#nTotal").textContent = money(t, m) + (m === "BS" ? " (BCV)" : "");
+  const m = $("#nMoneda").value, lineas = [];
+  $$(".line").forEach(el => {
+    const c = parseFloat(el.querySelector(".cant").value), p = parseFloat(el.querySelector(".precio").value), conIva = el.querySelector(".iva").checked;
+    const v = c > 0 && p >= 0 ? round2(c * p) : null;
+    el.querySelector(".monto").innerHTML = v == null ? "—" : money(v, m) + (conIva ? `<small class="ivamt">+ IVA ${nf.format(round2(v * IVA_PCT / 100))}</small>` : "");
+    if (v != null) lineas.push({ total: v, iva: conIva });
+  });
+  const t = totalesIva(lineas), sufijo = m === "BS" ? " (BCV)" : "";
+  $("#nTotal").textContent = money(t.total, m) + sufijo;
+  $("#nDesglose").textContent = t.iva ? `Subtotal ${money(t.sub, m)} · Base imponible ${money(t.baseImp, m)} · IVA ${IVA_PCT}% ${money(t.iva, m)}` : "Sin IVA";
 }
 function updateVence() {
   const c = document.querySelector("input[name=cond]:checked")?.value, f = $("#nFecha").value;
@@ -667,7 +697,7 @@ $("#formNuevo").addEventListener("submit", async ev => {
     if (!(cantidad > 0)) return fail(`Indique la cantidad de ${umb}.`);
     if (!(precio >= 0)) return fail(`Indique el precio de ${umb}.`);
     if (moneda === "USD" && precio > 100) return fail(`El precio de ${umb} (${nf.format(precio)}) parece estar en bolívares. Cambie la moneda a Bs. o corrija el precio.`);
-    filas.push({ fecha, cliente, cantidad, umb, precio, moneda, status, fecha_pago, referencia, nota: /^S\/?NT$/i.test(nota) ? "S/NT" : nota, responsable, observacion: $("#nObs").value.trim() || null, condicion, vendedor_id });
+    filas.push({ fecha, cliente, cantidad, umb, precio, moneda, status, fecha_pago, referencia, nota: /^S\/?NT$/i.test(nota) ? "S/NT" : nota, responsable, observacion: $("#nObs").value.trim() || null, condicion, vendedor_id, iva: el.querySelector(".iva").checked });
   }
   if (!filas.length) return fail("Agregue al menos un producto.");
   $("#nSave").disabled = true;
@@ -720,10 +750,13 @@ function abrirNota(rows, preguntar) {
   notaCtx = { rows };
   $("#ntTitulo").textContent = preguntar ? "¿Desea generar la nota de entrega?" : "Nota de entrega";
   $("#ntSub").textContent = `${d0.nota} · ${d0.cliente} · ${fdate(d0.fecha)}`;
-  const tot = { USD: 0, BS: 0 }; rows.forEach(d => tot[mon(d)] += d.monto);
-  $("#ntResumen").innerHTML = `<div class="tbl"><table><thead><tr><th class="n">Cant.</th><th>Producto</th><th class="n">Precio</th><th class="n">Total</th></tr></thead><tbody>
-    ${rows.map(d => `<tr><td class="n">${qf.format(d.cantidad)}</td><td><span class="code">${esc(d.umb)}</span> ${esc(S.productos.get(d.umb) && S.productos.get(d.umb) !== d.umb ? S.productos.get(d.umb) : "")}</td><td class="n">${nf4.format(d.precio)}</td><td class="n">${moneyHTML(d.monto, mon(d))}</td></tr>`).join("")}
-    </tbody><tfoot><tr><td colspan="3">Total de la venta</td><td class="n">${[tot.USD ? moneyHTML(tot.USD, "USD") : "", tot.BS ? moneyHTML(tot.BS, "BS") : ""].filter(Boolean).join("<br>")}</td></tr></tfoot></table></div>`;
+  const tt = m => { const r = rows.filter(d => mon(d) === m).map(d => ({ total: d.monto, iva: d.iva })); return r.length ? totalesIva(r) : null; };
+  const tot = { USD: tt("USD"), BS: tt("BS") }, hayIva = rows.some(d => d.iva);
+  const celdaTot = m => tot[m] ? moneyHTML(tot[m].total, m) + (tot[m].iva ? `<span class="sub">incluye IVA ${nf.format(tot[m].iva)}</span>` : "") : "";
+  $("#ntResumen").innerHTML = `<div class="tbl"><table><thead><tr><th class="n">Cant.</th><th>Producto</th><th class="n">Precio</th><th class="n">Total</th><th>IVA</th></tr></thead><tbody>
+    ${rows.map(d => `<tr><td class="n">${qf.format(d.cantidad)}</td><td><span class="code">${esc(d.umb)}</span> ${esc(descProd(d.umb) !== d.umb ? descProd(d.umb) : "")}</td><td class="n">${nf4.format(d.precio)}</td><td class="n">${moneyHTML(d.monto, mon(d))}</td><td>${d.iva ? `${IVA_PCT}%` : ""}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td colspan="3">Total a pagar</td><td class="n">${[celdaTot("USD"), celdaTot("BS")].filter(Boolean).join("<br>")}</td><td></td></tr></tfoot></table></div>`;
+  $("#ntIvaTxt").textContent = hayIva ? `Los productos marcados con IVA suman el ${IVA_PCT}% sobre su base imponible.` : "Esta nota no lleva IVA: el espacio del I.V.A. queda en blanco.";
   $("#ntMonedaTxt").textContent = !hayBs ? "La venta se registró en USD: la nota se emite en USD."
     : mixta ? "La nota tiene montos en USD y en Bs.: para emitirla en una sola moneda, los Bs. se convierten a USD con la tasa BCV."
     : "La venta se registró en bolívares. ¿Cómo desea emitir la nota?";
@@ -735,7 +768,10 @@ function abrirNota(rows, preguntar) {
   $("#ntRif").value = c.rif || ""; $("#ntTel").value = c.telefono || ""; $("#ntDir").value = c.direccion || "";
   $("#ntObs").value = [...new Set(rows.map(d => d.observacion).filter(Boolean))].join(" · ");
   $("#ntNo").textContent = preguntar ? "Ahora no" : "Cancelar";
-  msg("#ntMsg", "", ""); ntTasaVisible(); $("#dlgNota").showModal();
+  msg("#ntMsg", "", ""); ntTasaVisible();
+  // Despacho recién guardado y sin bolívares: no hay nada que decidir, la nota sale lista para imprimir.
+  if (preguntar && !hayBs) return generarNota();
+  $("#dlgNota").showModal();
 }
 function ntTasaVisible() {
   const hayBs = notaCtx?.rows.some(d => mon(d) === "BS"), usd = document.querySelector("input[name=ntMon]:checked")?.value === "USD";
@@ -750,8 +786,11 @@ $("#ntTasaHoy").addEventListener("click", async () => {
     msg("#ntMsg", "info", `Tasa BCV de hoy (${fdate(today())}): Bs. ${nf4.format(t)}. Verifique que corresponda a la fecha de la venta.`);
   } catch { msg("#ntMsg", "err", "No se pudo consultar la tasa en línea. Escríbala manualmente."); }
 });
-$("#formNota").addEventListener("submit", async ev => {
+$("#formNota").addEventListener("submit", ev => {
   if (ev.submitter?.value !== "ok") return; ev.preventDefault();
+  generarNota();
+});
+async function generarNota() {
   const rows = notaCtx.rows, d0 = rows[0], hayBs = rows.some(d => mon(d) === "BS");
   const moneda = hayBs ? document.querySelector("input[name=ntMon]:checked").value : "USD";
   const convertir = moneda === "USD" && hayBs, tasa = num($("#ntTasa").value), tasaFecha = $("#ntTasaFecha").value || d0.fecha;
@@ -760,14 +799,14 @@ $("#formNota").addEventListener("submit", async ev => {
   await guardarCliente(d0.cliente, { rif: $("#ntRif").value, telefono: $("#ntTel").value, direccion: $("#ntDir").value });
   const lineas = rows.map(d => {
     const conv = convertir && mon(d) === "BS";
-    return { cantidad: d.cantidad, concepto: S.productos.get(d.umb) || d.umb, precio: conv ? d.precio / tasa : d.precio, total: conv ? round2(d.monto / tasa) : d.monto };
+    return { cantidad: d.cantidad, concepto: descProd(d.umb), precio: conv ? d.precio / tasa : d.precio, total: conv ? round2(d.monto / tasa) : d.monto, iva: !!d.iva };
   });
-  const total = round2(lineas.reduce((a, l) => a + l.total, 0));
+  const total = totalesIva(lineas).total;
   const totalBs = round2(rows.filter(d => mon(d) === "BS").reduce((a, d) => a + d.monto, 0));
   const html = Documentos.notaHTML({
     nota: d0.nota, fecha: d0.fecha, emitida: new Date(), condicion: condOf(d0), dias: DIAS_CREDITO, moneda,
     cliente: { nombre: d0.cliente, rif: $("#ntRif").value.trim(), telefono: $("#ntTel").value.trim(), direccion: $("#ntDir").value.trim() },
-    lineas, conversion: convertir ? { tasa, fecha: tasaFecha, totalOriginal: totalBs } : null,
+    lineas, ivaPct: IVA_PCT, conversion: convertir ? { tasa, fecha: tasaFecha, totalOriginal: totalBs } : null,
     observacion: $("#ntObs").value.trim(), referencia: [...new Set(rows.map(d => d.referencia).filter(Boolean))].join(" / "),
     despachadoPor: S.perfil.nombre
   });
@@ -779,15 +818,14 @@ $("#formNota").addEventListener("submit", async ev => {
   logEvento("nota_entrega", { nota: d0.nota, cliente: d0.cliente, moneda, total });
   $("#ntSi").disabled = false; $("#dlgNota").close();
   Documentos.abrir(html, { titulo: `Nota de entrega ${d0.nota} · ${d0.cliente}`, archivo: `Nota de entrega ${d0.nota} - ${d0.cliente}.pdf` });
-});
+}
 $("#addLine").addEventListener("click", addLine);
 $("#lines").addEventListener("click", e => { if (e.target.closest("[data-rm]")) { e.target.closest(".line").remove(); recalc(); } });
-$("#lines").addEventListener("change", e => { if (e.target.matches(".umb")) fillPrice(e.target.closest(".line"), true); recalc(); });
-$("#lines").addEventListener("input", e => { if (e.target.matches(".precio")) { e.target.dataset.touched = "1"; e.target.closest(".line").querySelector(".hint").textContent = "Precio indicado manualmente."; } recalc(); });
+$("#lines").addEventListener("change", e => { if (e.target.matches(".umb")) fillPrice(e.target.closest(".line"), true); recalc(); });$("#lines").addEventListener("input", e => { if (e.target.matches(".precio")) { e.target.dataset.touched = "1"; e.target.closest(".line").querySelector(".hint").textContent = "Precio indicado manualmente."; } recalc(); });
 $("#nCliente").addEventListener("change", () => $$(".line").forEach(el => fillPrice(el, false)));
 $("#nMoneda").addEventListener("change", () => { $$(".line").forEach(el => fillPrice(el, false)); recalc(); });
 $("#nNota").addEventListener("input", () => notaTouched = true);
-$("#nFecha").addEventListener("change", updateVence);
+$("#nFecha").addEventListener("change", () => { updateVence(); $$(".line").forEach(el => fillPrice(el, false)); recalc(); });
 $("#nResp").addEventListener("change", () => $("#nVendWrap").hidden = $("#nResp").value !== "VENDEDOR");
 $$("input[name=cond]").forEach(r => r.addEventListener("change", () => { updateVence(); autoStatus(); }));
 $("#nStatus").addEventListener("change", () => statusTouched = true);
@@ -824,12 +862,15 @@ function openEdit(id) {
   if (d.comision_id) return toast("Esta venta ya tiene la comisión pagada. Para modificarla, anule primero el pago de comisión.");
   editId = id; $("#edSub").textContent = `${d.nota} · ${d.cliente}`;
   $("#eFecha").value = d.fecha; $("#eCliente").value = d.cliente; $("#eCant").value = d.cantidad; $("#eUmb").value = d.umb; $("#ePrecio").value = d.precio;
-  $("#eMon").value = mon(d); $("#eCond").value = condOf(d); $("#eStatus").value = d.status; $("#eFPago").value = d.fecha_pago || "";
+  $("#eIva").checked = !!d.iva; $("#eMon").value = mon(d); $("#eCond").value = condOf(d); $("#eStatus").value = d.status; $("#eFPago").value = d.fecha_pago || "";
   $("#eRef").value = d.referencia || ""; $("#eNota").value = d.nota || ""; $("#eResp").value = d.responsable; $("#eVend").value = d.vendedor_id || ""; $("#eObs").value = d.observacion || "";
   $("#edMsg").hidden = true; editTotal(); $("#dlgEdit").showModal();
 }
-function editTotal() { $("#edTotal").textContent = "Monto total: " + money(round2((parseFloat($("#eCant").value) || 0) * (parseFloat($("#ePrecio").value) || 0)), $("#eMon").value); }
-["#eCant", "#ePrecio", "#eMon"].forEach(s => $(s).addEventListener("input", editTotal));
+function editTotal() {
+  const base = round2((parseFloat($("#eCant").value) || 0) * (parseFloat($("#ePrecio").value) || 0)), m = $("#eMon").value, iva = $("#eIva").checked ? round2(base * IVA_PCT / 100) : 0;
+  $("#edTotal").textContent = iva ? `Base ${money(base, m)} + IVA ${IVA_PCT}% ${money(iva, m)} = ${money(base + iva, m)}` : "Monto total (sin IVA): " + money(base, m);
+}
+["#eCant", "#ePrecio", "#eMon", "#eIva"].forEach(s => $(s).addEventListener("input", editTotal));
 $("#formEdit").addEventListener("submit", async ev => {
   if (ev.submitter?.value !== "ok") return; ev.preventDefault();
   const fail = t => msg("#edMsg", "err", t);
@@ -848,7 +889,7 @@ $("#formEdit").addEventListener("submit", async ev => {
   const { error } = await sb.from("despachos").update({
     fecha, cliente: $("#eCliente").value.trim().replace(/\s+/g, " "), cantidad, umb: $("#eUmb").value, precio, moneda: $("#eMon").value,
     status, fecha_pago, referencia, nota: $("#eNota").value.trim().toUpperCase(), responsable, vendedor_id: responsable === "VENDEDOR" ? vendedor_id : null,
-    observacion: $("#eObs").value.trim() || null, condicion: $("#eCond").value
+    observacion: $("#eObs").value.trim() || null, condicion: $("#eCond").value, iva: $("#eIva").checked
   }).eq("id", editId);
   $("#edSave").disabled = false;
   if (error) return fail("No se pudo guardar: " + errTxt(error));
@@ -880,10 +921,10 @@ document.addEventListener("click", async e => {
 /* ====================== CSV ====================== */
 $("#exportBtn").addEventListener("click", () => {
   const [s, e] = range(), rows = inPeriod().sort((a, b) => a.fecha.localeCompare(b.fecha));
-  const head = ["Fecha Despacho", "Cliente", "Cantidad", "UMB", "Precio", "Moneda", "monto total", "Status", "Fecha de Pago", "nro de referencia", "N° de Factura / Entrega", "Responsable", "Vendedor", "Observación", "Condición de pago", "Vence"];
+  const head = ["Fecha Despacho", "Cliente", "Cantidad", "UMB", "Precio", "Moneda", "monto total (sin IVA)", "Lleva IVA", "IVA 16%", "Status", "Fecha de Pago", "nro de referencia", "N° de Factura / Entrega", "Responsable", "Vendedor", "Observación", "Condición de pago", "Vence"];
   const q = v => { const t = String(v ?? ""); return /[";\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
   const n = v => String(v ?? "").replace(".", ",");
-  const csv = "﻿" + [head, ...rows.map(d => [fdate(d.fecha), d.cliente, n(d.cantidad), d.umb, n(d.precio), mon(d) === "BS" ? "Bs. BCV" : "USD", n(d.monto), d.status, fdate(d.fecha_pago), d.referencia, d.nota, d.responsable, vendName(d.vendedor_id), d.observacion, COND_TXT[condOf(d)], fdate(venceOf(d))])].map(r => r.map(q).join(";")).join("\r\n");
+  const csv = "﻿" + [head, ...rows.map(d => [fdate(d.fecha), d.cliente, n(d.cantidad), d.umb, n(d.precio), mon(d) === "BS" ? "Bs. BCV" : "USD", n(d.monto), d.iva ? "SI" : "NO", n(ivaOf(d)), d.status, fdate(d.fecha_pago), d.referencia, d.nota, d.responsable, vendName(d.vendedor_id), d.observacion, COND_TXT[condOf(d)], fdate(venceOf(d))])].map(r => r.map(q).join(";")).join("\r\n");
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); a.download = `despachos_${s}_al_${e}.csv`; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   logEvento("exportacion", { desde: s, hasta: e, registros: rows.length });

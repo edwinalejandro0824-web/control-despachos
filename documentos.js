@@ -81,14 +81,19 @@ const CSS_NOTA = `
 
 /**
  * n = { nota, fecha (AAAA-MM-DD), emitida (Date), cliente:{nombre,rif,telefono,direccion}, condicion ("CONTADO"|"CREDITO"),
- *       dias, lineas:[{cantidad, concepto, precio, total}], moneda ("USD"|"BS"), conversion:{tasa, fecha, totalOriginal}|null,
+ *       dias, lineas:[{cantidad, concepto, precio, total, iva (true = lleva IVA)}], ivaPct (16), moneda ("USD"|"BS"), conversion:{tasa, fecha, totalOriginal}|null,
  *       observacion, referencia, despachadoPor }
  */
 function notaHTML(n) {
   const e = empresa(), m = MON(n.moneda), filasMin = 12;
-  const subtotal = n.lineas.reduce((a, l) => a + l.total, 0);
-  const filas = n.lineas.map(l => `<tr><td class="c">${qf.format(l.cantidad)}</td><td>${esc(l.concepto)}</td><td class="n">${nf4.format(l.precio)}</td><td class="n">${nf.format(l.total)}</td></tr>`);
-  while (filas.length < filasMin) filas.push(`<tr><td></td><td></td><td></td><td></td></tr>`);
+  const pct = n.ivaPct ?? 16, r2 = v => Math.round((v + Number.EPSILON) * 100) / 100;
+  const subtotal = r2(n.lineas.reduce((a, l) => a + l.total, 0));
+  // IVA = 16% de la base imponible (suma de las líneas que llevan IVA); el total a pagar es subtotal + IVA.
+  const baseImp = r2(n.lineas.filter(l => l.iva).reduce((a, l) => a + l.total, 0));
+  const conIva = baseImp > 0, iva = r2(baseImp * pct / 100), totalPagar = r2(subtotal + iva);
+  const cols = conIva ? 5 : 4;
+  const filas = n.lineas.map(l => `<tr><td class="c">${qf.format(l.cantidad)}</td><td>${esc(l.concepto)}</td><td class="n">${nf4.format(l.precio)}</td>${conIva ? `<td class="c">${l.iva ? pct + "%" : ""}</td>` : ""}<td class="n">${nf.format(l.total)}</td></tr>`);
+  while (filas.length < filasMin) filas.push(`<tr>${"<td></td>".repeat(cols)}</tr>`);
   const [y, mo, d] = n.fecha.split("-");
   const obs = [n.observacion,
     n.conversion ? `Montos expresados en USD a tasa BCV Bs. ${nf4.format(n.conversion.tasa)} del ${fdate(n.conversion.fecha)} (venta registrada por Bs. ${nf.format(n.conversion.totalOriginal)}).` : "",
@@ -112,7 +117,7 @@ function notaHTML(n) {
     <div><label>Condiciones de pago</label>Contado<span class="chk">${credito ? "" : "X"}</span> Crédito<span class="chk">${credito ? "X" : ""}</span> ${credito ? esc(n.dias) : "___"} días</div>
   </div>
   <table class="ne-items">
-    <thead><tr><th style="width:90px">CANTIDAD</th><th>CONCEPTO O DESCRIPCIÓN</th><th style="width:130px">PRECIO UNITARIO ${m}</th><th style="width:140px">TOTAL ${m}</th></tr></thead>
+    <thead><tr><th style="width:90px">CANTIDAD</th><th>CONCEPTO O DESCRIPCIÓN</th><th style="width:130px">PRECIO UNITARIO ${m}</th>${conIva ? `<th style="width:64px">I.V.A.</th>` : ""}<th style="width:140px">TOTAL ${m}</th></tr></thead>
     <tbody>${filas.join("")}</tbody>
   </table>
   <div class="ne-foot">
@@ -122,11 +127,12 @@ function notaHTML(n) {
       <p>Ref. Nº <span class="ln">${esc(n.referencia || "")}</span></p>
       <p>Banco <span class="ln"></span></p>
       <p><span class="chk"></span>Otros <span class="ln"></span></p></div>
-    <div class="ne-obs"><div><b>Observación:</b> ${obs.map(esc).join("<br>")}</div><div class="leg">ESTE DOCUMENTO VA SIN TACHADURA NI ENMENDADURA · NOTA DE ENTREGA SIN I.V.A.</div></div>
-    <div class="ne-tot">
+    <div class="ne-obs"><div><b>Observación:</b> ${obs.map(esc).join("<br>")}</div><div class="leg">ESTE DOCUMENTO VA SIN TACHADURA NI ENMENDADURA</div></div>
+    <div class="ne-tot" style="grid-template-rows:repeat(${conIva ? 4 : 3},1fr)">
       <div><span>SUB-TOTAL ${m}</span><b>${nf.format(subtotal)}</b></div>
-      <div><span>I.V.A.</span><b>No aplica</b></div>
-      <div><span>TOTAL A PAGAR ${m}</span><b>${nf.format(subtotal)}</b></div>
+      ${conIva ? `<div><span>BASE IMPONIBLE ${m}</span><b>${nf.format(baseImp)}</b></div>` : ""}
+      <div><span>I.V.A. ${conIva ? pct + "%" : ""}</span><b>${conIva ? nf.format(iva) : ""}</b></div>
+      <div><span>TOTAL A PAGAR ${m}</span><b>${nf.format(totalPagar)}</b></div>
     </div>
   </div>
   <div class="ne-firmas">

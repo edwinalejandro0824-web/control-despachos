@@ -138,8 +138,11 @@ legend { font: 700 .72rem var(--f-body); letter-spacing: .08em; text-transform: 
 .radio b { font-size: .92rem } .radio span { grid-column: 2; font-size: .78rem; color: var(--muted) }
 .radio:has(input:checked) { border-color: var(--brand); background: var(--brand-soft) }
 .lines { display: grid; gap: 10px }
-.line { display: grid; grid-template-columns: minmax(120px, 1.2fr) minmax(80px, .8fr) minmax(90px, .9fr) minmax(110px, 1fr) auto; gap: 10px; align-items: end }
+.line { display: grid; grid-template-columns: minmax(170px, 1.8fr) minmax(80px, .7fr) minmax(90px, .8fr) auto minmax(110px, 1fr) auto; gap: 10px; align-items: end }
 .line .monto { font: 600 .95rem var(--f-num); padding: 8px 0; text-align: right }
+.line .monto .ivamt { display: block; font: 500 .72rem var(--f-num); color: var(--muted) }
+.ivachk { display: flex; align-items: center; gap: 6px; padding: 10px 4px; font-size: .85rem; font-weight: 600; white-space: nowrap; cursor: pointer }
+.ivachk input { width: 18px; height: 18px }
 .line .hint { font-size: .72rem; color: var(--muted); grid-column: 1 / -1; margin-top: -6px }
 .total-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line) }
 .total-row .num { font-size: 1.35rem; font-weight: 600 }
@@ -176,6 +179,7 @@ dialog.doc-dlg[open] { display: flex; flex-direction: column }
 .doc-hoja { width: 760px; margin: 0 auto; background: #fff; box-shadow: 0 2px 14px rgb(0 0 0 / .18); transform-origin: top left; padding: 5px }
 @media (max-width: 600px) {
   .line { grid-template-columns: 1fr 1fr }
+  .line > .f:first-child { grid-column: 1 / -1 }
   .line .monto { text-align: left }
   .legend { margin-left: 0 }
   h1 small { display: none }

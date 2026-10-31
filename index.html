@@ -149,6 +149,7 @@
         </fieldset>
         <fieldset>
           <legend>Productos</legend>
+          <p class="muted" style="margin:0 0 10px;font-size:.8rem">Los precios son del catálogo y no incluyen IVA. Marque «+ IVA 16%» en los productos que lleven IVA; si no lo marca, se carga sin IVA.</p>
           <div class="lines" id="lines"></div>
           <button type="button" class="btn small" id="addLine" style="margin-top:12px">+ Agregar producto</button>
         </fieldset>
@@ -164,7 +165,7 @@
         <label class="f">Observación<input id="nObs" autocomplete="off"></label>
         <div id="nMsg" class="msg" hidden></div>
         <div class="total-row">
-          <div><span class="muted">Monto total de la nota</span>&nbsp; <span class="num" id="nTotal">USD 0,00</span></div>
+          <div><span class="muted">Total a pagar de la nota</span>&nbsp; <span class="num" id="nTotal">USD 0,00</span><div class="muted" id="nDesglose" style="font-size:.8rem;margin-top:2px">Sin IVA</div></div>
           <button class="btn primary" type="submit" id="nSave">Guardar despacho</button>
         </div>
       </form>
@@ -288,6 +289,7 @@
         <label class="f">UMB<select id="eUmb"></select></label>
         <label class="f">Precio<input id="ePrecio" type="number" step="0.01" min="0"></label>
         <label class="f">Moneda<select id="eMon"><option value="USD">USD — Dólares</option><option value="BS">Bs. — Bolívares (BCV)</option></select></label>
+        <label class="radio" style="align-self:end;padding:8px 12px"><input type="checkbox" id="eIva"><b style="font-size:.85rem">Lleva IVA 16%</b></label>
         <label class="f">Condición de pago<select id="eCond"><option value="CONTADO">De contado</option><option value="CREDITO">A crédito (7 días)</option></select></label>
         <label class="f">Status<select id="eStatus"></select></label>
         <label class="f">Fecha de pago<input type="date" id="eFPago"></label>
@@ -367,7 +369,7 @@
         </div>
       </fieldset>
       <label class="f">Observación de la nota<input id="ntObs" autocomplete="off"></label>
-      <p class="muted" style="margin:0;font-size:.8rem">La nota de entrega no lleva I.V.A.</p>
+      <p class="muted" style="margin:0;font-size:.8rem" id="ntIvaTxt"></p>
       <div id="ntMsg" class="msg" hidden></div>
     </div>
     <div class="df">
