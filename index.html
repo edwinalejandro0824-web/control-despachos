@@ -231,9 +231,22 @@
         </div>
       </div>
       <div class="card">
-        <h3>Productos · descripción en la nota de entrega</h3>
-        <p class="lead" style="margin:0 0 10px">Escriba cómo debe aparecer cada UMB en la columna «Concepto o descripción» de la nota de entrega. Se guarda al salir del campo.</p>
+        <h3>Productos · descripción y precio</h3>
+        <p class="lead" style="margin:0 0 10px">Escriba cómo debe aparecer cada UMB en la nota de entrega y su precio de catálogo en USD sin IVA. Se guarda al salir del campo; el precio nuevo se usa en los despachos que se registren desde ese momento.</p>
         <div class="tbl" id="aProductos"></div>
+      </div>
+      <div class="card">
+        <h3>Datos de la empresa</h3>
+        <p class="lead" style="margin:0 0 10px">Aparecen en el encabezado de las notas de entrega y de los reportes.</p>
+        <form id="formEmpresa" class="filters" style="align-items:flex-end">
+          <label class="f grow">Nombre o razón social<input id="emNombre" autocomplete="off"></label>
+          <label class="f">Marca<input id="emMarca" autocomplete="off"></label>
+          <label class="f">RIF<input id="emRif" autocomplete="off"></label>
+          <label class="f">Teléfono<input id="emTel" autocomplete="off"></label>
+          <label class="f grow" style="flex-basis:100%">Dirección<input id="emDir" autocomplete="off"></label>
+          <button class="btn primary" type="submit">Guardar datos</button>
+        </form>
+        <div id="emMsg" class="msg" hidden></div>
       </div>
       <div class="card">
         <h3>Clientes con nombres parecidos</h3>

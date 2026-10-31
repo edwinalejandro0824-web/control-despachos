@@ -221,16 +221,17 @@ async function fetchAll(table, order) {
 async function cargarTodo() {
   $("#dot").className = "dot";
   try {
-    const [docs, vend, tasas, coms, perfs, clis, prods, abos, nots] = await Promise.all([
+    const [docs, vend, tasas, coms, perfs, clis, prods, emp, abos, nots] = await Promise.all([
       fetchAll("despachos", "fecha"), fetchAll("vendedores", "nombre"), fetchAll("tasas_bcv", "fecha"),
       fetchAll("comisiones", "mes"), S.admin ? fetchAll("perfiles", "nombre") : Promise.resolve([]),
-      fetchAll("clientes", "nombre"), fetchAll("productos", "umb"),
+      fetchAll("clientes", "nombre"), fetchAll("productos", "umb"), sb.from("empresa").select("*").eq("id", 1).maybeSingle().then(r => r.data),
       S.admin ? fetchAll("abonos", "creado_en") : Promise.resolve([]), fetchAll("notas_entrega", "emitida_en")
     ]);
     S.docs = docs.map(d => ({ ...d, cantidad: num(d.cantidad), precio: num(d.precio), monto: num(d.monto), iva: !!d.iva }));
     S.byId = new Map(S.docs.map(d => [d.id, d]));
     S.vendedores = vend; S.tasas = new Map(tasas.map(t => [t.fecha, num(t.tasa)])); S.comisiones = coms; S.perfiles = perfs;
-    S.clientes = new Map(clis.map(c => [norm(c.nombre), c])); S.clientesRaw = clis; S.productos = new Map(prods.map(p => [p.umb, p.descripcion]));
+    S.clientes = new Map(clis.map(c => [norm(c.nombre), c])); S.clientesRaw = clis; S.productos = new Map(prods.map(p => [p.umb, p.descripcion])); S.precios = new Map(prods.filter(p => p.precio_usd != null).map(p => [p.umb, num(p.precio_usd)]));
+    if (emp) { S.empresa = emp; Object.assign(CONFIG.EMPRESA, { NOMBRE: emp.nombre, MARCA: emp.marca || CONFIG.EMPRESA.MARCA, RIF: emp.rif || "", DIRECCION: emp.direccion || "", TELEFONO: emp.telefono || "" }); }
     S.abonos = abos.map(a => ({ ...a, monto: num(a.monto) })); S.notas = nots;
     S.loaded = true; $("#dot").className = "dot on"; $("#banner").hidden = true;
     fillSelects(); render();
@@ -592,8 +593,9 @@ function renderAdmin() {
   $("#aTasas").innerHTML = tasas.length ? `<table><thead><tr><th>Fecha</th><th class="n">Bs. por USD</th></tr></thead><tbody>${tasas.map(([f, t]) => `<tr><td>${fdate(f)}</td><td class="n">${nf4.format(t)}</td></tr>`).join("")}</tbody></table>` : empty("Sin tasas registradas.");
   if (!$("#aTasaFecha").value) $("#aTasaFecha").value = today();
   if (!$("#aProductos").contains(document.activeElement))
-    $("#aProductos").innerHTML = `<table><thead><tr><th>UMB</th><th>Descripción en la nota de entrega</th></tr></thead><tbody>
-    ${UMBS.map(u => `<tr><td><span class="code">${esc(u)}</span></td><td><input data-prod="${esc(u)}" value="${esc(descProd(u))}" aria-label="Descripción de ${esc(u)}"></td></tr>`).join("")}</tbody></table>`;
+    $("#aProductos").innerHTML = `<table><thead><tr><th>UMB</th><th>Descripción en la nota de entrega</th><th class="n">Precio USD sin IVA</th></tr></thead><tbody>
+    ${UMBS.map(u => `<tr><td><span class="code">${esc(u)}</span></td><td><input data-prod="${esc(u)}" value="${esc(descProd(u))}" aria-label="Descripción de ${esc(u)}"></td><td><input data-precio="${esc(u)}" type="number" step="0.0001" min="0" inputmode="decimal" value="${precioUsd(u) ?? ""}" placeholder="—" style="text-align:right;max-width:120px" aria-label="Precio de ${esc(u)}"></td></tr>`).join("")}</tbody></table>`;
+  if (S.empresa && !$("#formEmpresa").contains(document.activeElement)) { const e = S.empresa; $("#emNombre").value = e.nombre || ""; $("#emMarca").value = e.marca || ""; $("#emRif").value = e.rif || ""; $("#emTel").value = e.telefono || ""; $("#emDir").value = e.direccion || ""; }
 }
 let dupGrupos = [];
 function renderClientesDup() {
@@ -647,6 +649,14 @@ $("#formVend").addEventListener("submit", async e => {
   if (error) return toast(/duplicate/i.test(errTxt(error)) ? "Ya existe un vendedor con ese nombre." : "No se pudo agregar: " + errTxt(error));
   $("#aVendNombre").value = ""; toast(`Vendedor ${nombre} agregado.`); cargarTodo();
 });
+$("#formEmpresa").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const f = id => $(id).value.trim().replace(/\s+/g, " "), nombre = f("#emNombre");
+  if (!nombre) return msg("#emMsg", "err", "Indique el nombre de la empresa.");
+  const { error } = await sb.from("empresa").update({ nombre, marca: f("#emMarca"), rif: f("#emRif"), telefono: f("#emTel"), direccion: f("#emDir"), actualizado_en: new Date().toISOString() }).eq("id", 1);
+  if (error) return msg("#emMsg", "err", "No se pudo guardar: " + errTxt(error));
+  msg("#emMsg", "ok", "Datos guardados. Las notas nuevas saldrán con ellos."); cargarTodo();
+});
 $("#formTasa").addEventListener("submit", e => { e.preventDefault(); guardarTasa($("#aTasaFecha").value, num($("#aTasaValor").value)).then(ok => ok && ($("#aTasaValor").value = "")); });
 document.addEventListener("change", async e => {
   const t = e.target, upd = async (table, id, patch, ok) => { const { error } = await sb.from(table).update(patch).eq("id", id); toast(error ? "No se pudo guardar: " + errTxt(error) : ok); cargarTodo(); };
@@ -659,6 +669,14 @@ document.addEventListener("change", async e => {
     const { error } = await sb.from("productos").upsert({ umb: t.dataset.prod, descripcion });
     if (error) return toast("No se pudo guardar: " + errTxt(error));
     S.productos.set(t.dataset.prod, descripcion); toast(`${t.dataset.prod}: «${descripcion}» guardado.`);
+  }
+  if (t.dataset.precio) {
+    const v = t.value.trim() === "" ? null : parseFloat(t.value);
+    if (v !== null && !(v >= 0 && v < 100000)) return toast("Indique un precio válido en USD.");
+    const { error } = await sb.from("productos").update({ precio_usd: v }).eq("umb", t.dataset.precio);
+    if (error) return toast("No se pudo guardar: " + errTxt(error));
+    if (v === null) S.precios.delete(t.dataset.precio); else S.precios.set(t.dataset.precio, v);
+    toast(`${t.dataset.precio}: precio USD ${v === null ? "quitado" : nf4.format(v) + " sin IVA"} guardado. Se aplica a los despachos nuevos.`);
   }
 });
 
@@ -687,8 +705,9 @@ function suggestPrice(cliente, umb, moneda) {
   return null;
 }
 /** Precio del catálogo (brochure) sin IVA. En Bs. se convierte con la tasa BCV de la fecha del despacho. */
+const precioUsd = umb => S.precios?.get(umb) ?? CATALOGO[umb]?.precio ?? null;
 function precioCatalogo(umb, moneda, fecha) {
-  const c = CATALOGO[umb]; if (!c) return null;
+  const c = precioUsd(umb) == null ? null : { precio: precioUsd(umb) }; if (!c) return null;
   if (moneda !== "BS") return { precio: c.precio, from: "Precio de catálogo sin IVA (brochure 2026)." };
   const t = tasaPara(fecha);
   if (!(t.tasa > 0)) return { precio: null, from: "Venta en Bs.: falta registrar la tasa BCV (Administración › Tasas BCV) o escriba el precio en Bs." };
@@ -696,7 +715,7 @@ function precioCatalogo(umb, moneda, fecha) {
 }
 function addLine() {
   const i = ++seq, el = document.createElement("div"); el.className = "line";
-  const optTxt = u => CATALOGO[u] ? `${descProd(u)} (${u})` : u;
+  const optTxt = u => precioUsd(u) != null ? `${descProd(u)} (${u})` : u;
   el.innerHTML = `<label class="f">Producto <span class="req">*</span><select class="umb" id="l${i}-umb">${UMBS.map(c => `<option value="${esc(c)}">${esc(optTxt(c))}</option>`).join("")}</select></label>
     <label class="f">Cantidad <span class="req">*</span><input class="cant" id="l${i}-cant" type="number" min="0" step="any" inputmode="decimal"></label>
     <label class="f">Precio sin IVA <span class="req">*</span><input class="precio" id="l${i}-precio" type="number" min="0" step="0.01" inputmode="decimal"></label>
