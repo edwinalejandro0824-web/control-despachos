@@ -37,6 +37,22 @@
   </form>
 </div>
 
+<div class="login" id="vMfa" hidden>
+  <form class="box" id="formMfa" novalidate>
+    <div class="brand"><div class="mark">DX</div><h1>Verificación en dos pasos<small id="mfaSub"></small></h1></div>
+    <div id="mfaEnroll" hidden>
+      <p class="muted" style="margin:0 0 10px">1. Abra su app autenticadora (Google Authenticator, Microsoft Authenticator o Authy) y escanee este código QR.</p>
+      <div style="text-align:center"><img id="mfaQr" alt="Código QR para la app autenticadora" width="180" height="180" style="background:#fff;padding:6px;border-radius:8px"></div>
+      <p class="muted" style="margin:10px 0 0;font-size:.85em">Si no puede escanear, escriba esta clave en la app:<br><code id="mfaSecret" style="word-break:break-all;user-select:all"></code></p>
+      <p class="muted" style="margin:10px 0 0">2. Escriba abajo el código de 6 dígitos que muestra la app.</p>
+    </div>
+    <label class="f">Código de 6 dígitos<input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" placeholder="000000" style="letter-spacing:.3em;text-align:center;font-size:1.3em"></label>
+    <div id="mfaMsg" class="msg" hidden></div>
+    <button class="btn primary" type="submit" id="mfaBtn">Verificar</button>
+    <button class="btn" type="button" id="mfaSalir">Cancelar y cerrar sesión</button>
+  </form>
+</div>
+
 <div class="login" id="vPend" hidden>
   <div class="box">
     <div class="brand"><div class="mark">CD</div><h1>Cuenta pendiente de aprobación<small id="pendCorreo"></small></h1></div>

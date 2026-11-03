@@ -147,7 +147,7 @@ const inPeriod = () => { const [s, e] = range(); return S.docs.filter(d => d.fec
 
 /* ====================== Autenticación ====================== */
 let signup = false;
-function showView(v) { ["#vLogin", "#vPend", "#vApp"].forEach(s => $(s).hidden = s !== v); }
+function showView(v) { ["#vLogin", "#vMfa", "#vPend", "#vApp"].forEach(s => $(s).hidden = s !== v); }
 $("#lToggle").addEventListener("click", () => {
   signup = !signup;
   $("#lNombreWrap").hidden = !signup;
@@ -171,7 +171,6 @@ $("#formLogin").addEventListener("submit", async e => {
     } else {
       const { error } = await sb.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      logEvento("inicio_sesion", { correo: email });
     }
   } catch (err) {
     msg("#lMsg", "err", /Invalid login/i.test(errTxt(err)) ? "Correo o contraseña incorrectos." : "No fue posible continuar: " + errTxt(err));
@@ -187,12 +186,58 @@ async function salir() { await logEvento("cierre_sesion"); await sb.auth.signOut
 $("#btnSalir").addEventListener("click", salir);
 $("#pendSalir").addEventListener("click", salir);
 
+/* Verificación en dos pasos (código de app autenticadora, TOTP) */
+let mfaFactorId = null, mfaEnrolando = false;
+async function puerta(user) {
+  try {
+    const { data: aal, error } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) throw error;
+    if (aal.currentLevel === "aal2") return iniciar(user);
+    const { data: fl, error: e2 } = await sb.auth.mfa.listFactors();
+    if (e2) throw e2;
+    const f = (fl.totp || [])[0]; // solo los verificados
+    mfaEnrolando = !f;
+    $("#mfaEnroll").hidden = !!f; msg("#mfaMsg", "", ""); $("#mfaCode").value = "";
+    if (f) { mfaFactorId = f.id; $("#mfaSub").textContent = "Escriba el código de su app autenticadora"; }
+    else {
+      for (const u of (fl.all || []).filter(x => x.status !== "verified")) await sb.auth.mfa.unenroll({ factorId: u.id });
+      const { data, error: e3 } = await sb.auth.mfa.enroll({ factorType: "totp", friendlyName: "App autenticadora " + new Date().toISOString().slice(0, 10) });
+      if (e3) throw e3;
+      mfaFactorId = data.id; $("#mfaQr").src = data.totp.qr_code; $("#mfaSecret").textContent = data.totp.secret;
+      $("#mfaSub").textContent = "Configure su app autenticadora (solo la primera vez)";
+    }
+    showView("#vMfa"); $("#mfaCode").focus();
+  } catch (err) {
+    showView("#vLogin"); msg("#lMsg", "err", "No fue posible iniciar la verificación en dos pasos: " + errTxt(err));
+  }
+}
+$("#formMfa").addEventListener("submit", async e => {
+  e.preventDefault();
+  const code = $("#mfaCode").value.replace(/\s/g, "");
+  if (!/^\d{6}$/.test(code)) return msg("#mfaMsg", "err", "Escriba los 6 dígitos del código.");
+  $("#mfaBtn").disabled = true;
+  try {
+    const { error } = await sb.auth.mfa.challengeAndVerify({ factorId: mfaFactorId, code });
+    if (error) throw error;
+    const { data } = await sb.auth.getUser();
+    await logEvento(mfaEnrolando ? "mfa_activado" : "inicio_sesion", { correo: data.user.email });
+    iniciar(data.user);
+  } catch (err) {
+    msg("#mfaMsg", "err", /invalid|expired/i.test(errTxt(err)) ? "Código incorrecto o vencido. Intente con el código actual de la app." : "No fue posible verificar: " + errTxt(err));
+    $("#mfaCode").select();
+  } finally { $("#mfaBtn").disabled = false; }
+});
+$("#mfaSalir").addEventListener("click", async () => { await sb.auth.signOut(); location.reload(); });
+
 sb.auth.onAuthStateChange((ev, session) => {
   if (ev === "PASSWORD_RECOVERY") {
     const nueva = window.prompt("Escriba su nueva contraseña (mínimo 8 caracteres):");
     if (nueva && nueva.length >= 8) sb.auth.updateUser({ password: nueva }).then(({ error }) => toast(error ? "No se pudo cambiar la contraseña." : "Contraseña actualizada."));
   }
-  if (ev === "SIGNED_IN" || ev === "INITIAL_SESSION") { if (session && (!S.user || S.user.id !== session.user.id)) iniciar(session.user); else if (!session) showView("#vLogin"); }
+  if (ev === "SIGNED_IN" || ev === "INITIAL_SESSION") {
+    if (session && (!S.user || S.user.id !== session.user.id)) { if (!S.verificando) { S.verificando = true; setTimeout(() => puerta(session.user).finally(() => S.verificando = false), 0); } }
+    else if (!session) showView("#vLogin");
+  }
   if (ev === "SIGNED_OUT") showView("#vLogin");
 });
 
