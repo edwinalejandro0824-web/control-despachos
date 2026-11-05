@@ -196,11 +196,11 @@ async function puerta(user) {
     if (error) throw error;
     if (aal.currentLevel === "aal2") return iniciar(user);
     // Dispositivo ya registrado: no se pide el código.
-    const tk = lsGet("dx_dispositivo");
+    const kd = "dx_dispositivo_" + user.id, tk = lsGet(kd);
     if (aal.nextLevel === "aal2" && tk) {
       const { data: ok } = await sb.rpc("confiar_sesion", { p_token: tk });
       if (ok === true) { logEvento("inicio_sesion", { correo: user.email, dispositivo: "registrado" }); return iniciar(user); }
-      lsSet("dx_dispositivo", null); // vencido o revocado: se vuelve a pedir el código
+      lsSet(kd, null); // vencido o revocado: se vuelve a pedir el código
     }
     const { data: fl, error: e2 } = await sb.auth.mfa.listFactors();
     if (e2) throw e2;
@@ -232,7 +232,7 @@ $("#formMfa").addEventListener("submit", async e => {
     try { // registra este dispositivo para no volver a pedir el código aquí
       const tk = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
       const { error: er } = await sb.rpc("registrar_dispositivo", { p_token: tk, p_nombre: navigator.userAgent });
-      if (!er) lsSet("dx_dispositivo", tk);
+      if (!er) lsSet("dx_dispositivo_" + data.user.id, tk);
     } catch {}
     await logEvento(mfaEnrolando ? "mfa_activado" : "inicio_sesion", { correo: data.user.email });
     iniciar(data.user);
