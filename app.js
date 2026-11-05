@@ -1265,6 +1265,15 @@ $("#nStatus").innerHTML = opts(["DESPACHADO", "VALIDADO"], STATUS_TXT); $("#eSta
 $("#eUmb").innerHTML = opts(UMBS);
 $("#nFecha").value = today(); updateVence(); addLine();
 document.addEventListener("visibilitychange", () => { if (!document.hidden && S.perfil) render(); });
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+if ("serviceWorker" in navigator) {
+  const habia = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register("sw.js").then(r => r.update().catch(() => {})).catch(() => {});
+  // Cuando llega una versión nueva: si está en la pantalla de acceso se recarga sola; si está trabajando, se avisa.
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!habia) return;
+    if ($("#vApp").hidden) location.reload();
+    else toast("Hay una versión nueva de la aplicación. Se aplicará al recargar la página (F5).");
+  });
+}
 if (/TU-PROYECTO/.test(CONFIG.SUPABASE_URL)) { showView("#vLogin"); msg("#lMsg", "info", "La aplicación aún no está conectada a la base de datos (falta configurar config.js)."); }
 })();
