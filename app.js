@@ -2,7 +2,7 @@
 "use strict";
 
 /* ====================== Listas (hoja "data" del Excel) ====================== */
-const UMBS = ["CJ","GALLETAS","KG","KG PMB","KG PMCH","KG PMV","MAQUILA","MHCH","MHM","MINI","PMB","PMCH","PMS","PMV","PMM","PROMO","UND","WPMCH","WPMV","WPMB"];
+let UMBS = ["CJ","GALLETAS","KG","KG PMB","KG PMCH","KG PMV","MAQUILA","MHCH","MHM","MINI","PMB","PMCH","PMS","PMV","PMM","PROMO","UND","WPMCH","WPMV","WPMB"];
 const RESPONSABLES = ["CHOCOTENTACION","TIENDAS","DEGUSTACION","OBSEQUIO","REPOSICION","VENDEDOR"];
 const STATUS = ["DESPACHADO","VALIDADO","COMISION"];
 const STATUS_TXT = { DESPACHADO: "DESPACHADO", VALIDADO: "VALIDADO", COMISION: "COMISIÓN" };
@@ -290,11 +290,11 @@ async function cargarTodo() {
     S.docs = docs.map(d => ({ ...d, cantidad: num(d.cantidad), precio: num(d.precio), monto: num(d.monto), iva: !!d.iva }));
     S.byId = new Map(S.docs.map(d => [d.id, d]));
     S.vendedores = vend; S.tasas = new Map(tasas.map(t => [t.fecha, num(t.tasa)])); S.comisiones = coms; S.perfiles = perfs;
-    S.clientes = new Map(clis.map(c => [norm(c.nombre), c])); S.clientesRaw = clis; S.productos = new Map(prods.map(p => [p.umb, p.descripcion])); S.precios = new Map(prods.filter(p => p.precio_usd != null).map(p => [p.umb, num(p.precio_usd)]));
+    S.clientes = new Map(clis.map(c => [norm(c.nombre), c])); S.clientesRaw = clis; S.productosRaw = prods; UMBS = prods.filter(p => p.activo !== false).map(p => p.umb); S.productos = new Map(prods.map(p => [p.umb, p.descripcion])); S.precios = new Map(prods.filter(p => p.precio_usd != null).map(p => [p.umb, num(p.precio_usd)]));
     if (emp) { S.empresa = emp; Object.assign(CONFIG.EMPRESA, { NOMBRE: emp.nombre, MARCA: emp.marca || CONFIG.EMPRESA.MARCA, RIF: emp.rif || "", DIRECCION: emp.direccion || "", TELEFONO: emp.telefono || "" }); }
     S.abonos = abos.map(a => ({ ...a, monto: num(a.monto) })); S.notas = nots;
     S.loaded = true; $("#dot").className = "dot on"; $("#banner").hidden = true;
-    fillSelects(); render();
+    fillSelects(); refrescarUmbs(); render();
     if (S.admin && !S.tasaAuto) { S.tasaAuto = true; tasaAutomatica(); }
   } catch (err) {
     $("#dot").className = "dot off";
@@ -664,9 +664,10 @@ function renderAdmin() {
   const tasas = [...S.tasas].sort((a, b) => b[0].localeCompare(a[0]));
   $("#aTasas").innerHTML = tasas.length ? `<table><thead><tr><th>Fecha</th><th class="n">Bs. por USD</th></tr></thead><tbody>${tasas.map(([f, t]) => `<tr><td>${fdate(f)}</td><td class="n">${nf4.format(t)}</td></tr>`).join("")}</tbody></table>` : empty("Sin tasas registradas.");
   if (!$("#aTasaFecha").value) $("#aTasaFecha").value = today();
-  if (!$("#aProductos").contains(document.activeElement))
-    $("#aProductos").innerHTML = `<table><thead><tr><th>UMB</th><th>Descripción en la nota de entrega</th><th class="n">Precio USD sin IVA</th></tr></thead><tbody>
-    ${UMBS.map(u => `<tr><td><span class="code">${esc(u)}</span></td><td><input data-prod="${esc(u)}" value="${esc(descProd(u))}" aria-label="Descripción de ${esc(u)}"></td><td><input data-precio="${esc(u)}" type="number" step="0.0001" min="0" inputmode="decimal" value="${precioUsd(u) ?? ""}" placeholder="—" style="text-align:right;max-width:120px" aria-label="Precio de ${esc(u)}"></td></tr>`).join("")}</tbody></table>`;
+  if (!$("#aProductos").contains(document.activeElement)) {
+    $("#aProductos").innerHTML = `<table><thead><tr><th>UMB</th><th>Descripción en la nota de entrega</th><th class="n">Precio USD sin IVA</th><th>Activo</th><th></th></tr></thead><tbody>
+    ${(S.productosRaw || []).map(r => { const u = r.umb, usado = S.docs.some(d => d.umb === u); return `<tr><td><span class="code">${esc(u)}</span></td><td><input data-prod="${esc(u)}" value="${esc(descProd(u))}" aria-label="Descripción de ${esc(u)}"></td><td><input data-precio="${esc(u)}" type="number" step="0.0001" min="0" inputmode="decimal" value="${precioUsd(u) ?? ""}" placeholder="—" style="text-align:right;max-width:120px" aria-label="Precio de ${esc(u)}"></td><td><input type="checkbox" data-pact="${esc(u)}" ${r.activo !== false ? "checked" : ""} aria-label="Activo ${esc(u)}" title="Si lo desactiva, deja de aparecer al registrar despachos"></td><td>${usado ? "" : `<button type="button" class="btn small" data-pdel="${esc(u)}" title="Eliminar (solo si no tiene despachos)">Eliminar</button>`}</td></tr>`; }).join("")}</tbody></table>`;
+  }
   if (S.empresa && !$("#formEmpresa").contains(document.activeElement)) { const e = S.empresa; $("#emNombre").value = e.nombre || ""; $("#emMarca").value = e.marca || ""; $("#emRif").value = e.rif || ""; $("#emTel").value = e.telefono || ""; $("#emDir").value = e.direccion || ""; }
 }
 let dupGrupos = [];
@@ -730,6 +731,35 @@ $("#formEmpresa").addEventListener("submit", async ev => {
   msg("#emMsg", "ok", "Datos guardados. Las notas nuevas saldrán con ellos."); cargarTodo();
 });
 $("#formTasa").addEventListener("submit", e => { e.preventDefault(); guardarTasa($("#aTasaFecha").value, num($("#aTasaValor").value)).then(ok => ok && ($("#aTasaValor").value = "")); });
+const upd2 = async (table, col, id, patch, ok) => { const { error } = await sb.from(table).update(patch).eq(col, id); toast(error ? "No se pudo guardar: " + errTxt(error) : ok); cargarTodo(); };
+function refrescarUmbs() {
+  document.querySelectorAll("select.umb").forEach(sel => {
+    const v = sel.value, optTxt = u => precioUsd(u) != null ? `${descProd(u)} (${u})` : u;
+    sel.innerHTML = UMBS.map(c => `<option value="${esc(c)}">${esc(optTxt(c))}</option>`).join("");
+    if (v && UMBS.includes(v)) sel.value = v;
+  });
+  const todos = (S.productosRaw || []).map(p => p.umb);
+  if (todos.length) { const ev = $("#eUmb").value; $("#eUmb").innerHTML = opts(todos); if (ev && todos.includes(ev)) $("#eUmb").value = ev; }
+}
+$("#formProd").addEventListener("submit", async e => {
+  e.preventDefault();
+  const umb = $("#pUmb").value.trim().replace(/\s+/g, " ").toUpperCase(), desc = $("#pDesc").value.trim().replace(/\s+/g, " ") || umb, pv = $("#pPrecio").value.trim();
+  const precio = pv === "" ? null : parseFloat(pv);
+  if (!umb || umb.length > 30) return msg("#pMsg", "err", "Escriba el código (UMB) del producto, de hasta 30 caracteres.");
+  if (precio !== null && !(precio >= 0 && precio < 100000)) return msg("#pMsg", "err", "Indique un precio válido en USD.");
+  if ((S.productosRaw || []).some(p => p.umb === umb)) return msg("#pMsg", "err", `El código ${umb} ya existe. Edítelo en la tabla de abajo.`);
+  $("#pBtn").disabled = true;
+  const { error } = await sb.from("productos").insert({ umb, descripcion: desc, precio_usd: precio, activo: true });
+  $("#pBtn").disabled = false;
+  if (error) return msg("#pMsg", "err", "No se pudo guardar: " + errTxt(error));
+  msg("#pMsg", "ok", `Producto ${umb} agregado. Ya sale al registrar despachos.`); $("#formProd").reset(); cargarTodo();
+});
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-pdel]"); if (!b) return;
+  const u = b.dataset.pdel; if (!confirm(`¿Eliminar el producto ${u}? Esta acción no se puede deshacer.`)) return;
+  const { error } = await sb.from("productos").delete().eq("umb", u);
+  toast(error ? "No se pudo eliminar (¿tiene despachos?): " + errTxt(error) : `Producto ${u} eliminado.`); cargarTodo();
+});
 document.addEventListener("change", async e => {
   const t = e.target, upd = async (table, id, patch, ok) => { const { error } = await sb.from(table).update(patch).eq("id", id); toast(error ? "No se pudo guardar: " + errTxt(error) : ok); cargarTodo(); };
   if (t.dataset.urol) upd("perfiles", t.dataset.urol, { rol: t.value }, "Rol actualizado.");
@@ -742,6 +772,7 @@ document.addEventListener("change", async e => {
     if (error) return toast("No se pudo guardar: " + errTxt(error));
     S.productos.set(t.dataset.prod, descripcion); toast(`${t.dataset.prod}: «${descripcion}» guardado.`);
   }
+  if (t.dataset.pact) upd2("productos", "umb", t.dataset.pact, { activo: t.checked }, t.checked ? "Producto activado." : "Producto desactivado: ya no sale al registrar despachos.");
   if (t.dataset.precio) {
     const v = t.value.trim() === "" ? null : parseFloat(t.value);
     if (v !== null && !(v >= 0 && v < 100000)) return toast("Indique un precio válido en USD.");
