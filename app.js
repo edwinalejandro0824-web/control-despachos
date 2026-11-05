@@ -259,9 +259,9 @@ async function iniciar(user) {
   S.user = user;
   const { data: perfil, error } = await sb.from("perfiles").select("*").eq("id", user.id).maybeSingle();
   if (error || !perfil) { showView("#vPend"); $("#pendCorreo").textContent = user.email; return; }
-  S.perfil = perfil; S.admin = perfil.rol === "admin" && perfil.activo;
+  S.perfil = perfil; S.admin = perfil.rol === "admin" && perfil.activo; S.operadora = perfil.rol === "operadora" && perfil.activo; S.full = S.admin || S.operadora;
   if (!perfil.activo) { showView("#vPend"); $("#pendCorreo").textContent = user.email; return; }
-  $("#whoName").textContent = perfil.nombre; $("#whoRole").textContent = S.admin ? "ADMINISTRADOR" : "VENDEDOR";
+  $("#whoName").textContent = perfil.nombre; $("#whoRole").textContent = S.admin ? "ADMINISTRADOR" : S.operadora ? "OPERADORA" : "VENDEDOR";
   showView("#vApp");
   buildNav();
   await cargarTodo();
@@ -327,6 +327,7 @@ function suscribir() {
 
 /* ====================== Navegación ====================== */
 function tabsFor() {
+  if (S.operadora) return [["reportes", "Reportes"], ["nuevo", "Nuevo despacho"]];
   return S.admin
     ? [["reportes", "Reportes"], ["registro", "Registro de despachos"], ["nuevo", "Nuevo despacho"], ["cobranza", "Cuentas por cobrar"], ["comisiones", "Comisiones"], ["admin", "Administración"]]
     : [["misventas", "Mis ventas y comisiones"], ["nuevo", "Nuevo despacho"]];
@@ -337,7 +338,7 @@ function buildNav() {
   let t = null; try { t = localStorage.getItem("tab"); } catch {}
   goTab(tabsFor().some(([k]) => k === t) ? t : tabsFor()[0][0]);
   // vendedor: el despacho siempre es suyo
-  $("#nRespWrap").hidden = !S.admin; $("#nPagoSet").hidden = !S.admin;
+  $("#nRespWrap").hidden = !S.full; $("#nPagoSet").hidden = !S.full;
 }
 function goTab(t) {
   S.tab = t;
@@ -655,7 +656,7 @@ function renderAdmin() {
   const vOpts = `<option value="">— Ninguno —</option>` + S.vendedores.map(v => `<option value="${v.id}">${esc(v.nombre)}</option>`).join("");
   $("#aUsuarios").innerHTML = S.perfiles.length ? `<table><thead><tr><th>Nombre</th><th>Rol</th><th>Vendedor</th><th>Activo</th></tr></thead><tbody>
     ${S.perfiles.map(p => `<tr><td>${esc(p.nombre)}<span class="sub">${esc(p.correo)}</span></td>
-      <td><select data-urol="${p.id}" ${p.id === S.user.id ? "disabled" : ""}><option value="vendedor" ${p.rol === "vendedor" ? "selected" : ""}>Vendedor</option><option value="admin" ${p.rol === "admin" ? "selected" : ""}>Administrador</option></select></td>
+      <td><select data-urol="${p.id}" ${p.id === S.user.id ? "disabled" : ""}><option value="vendedor" ${p.rol === "vendedor" ? "selected" : ""}>Vendedor</option><option value="operadora" ${p.rol === "operadora" ? "selected" : ""}>Operadora</option><option value="admin" ${p.rol === "admin" ? "selected" : ""}>Administrador</option></select></td>
       <td><select data-uvend="${p.id}">${vOpts.replace(`value="${p.vendedor_id}"`, `value="${p.vendedor_id}" selected`)}</select></td>
       <td><input type="checkbox" data-uact="${p.id}" ${p.activo ? "checked" : ""} ${p.id === S.user.id ? "disabled" : ""} aria-label="Activo"></td></tr>`).join("")}</tbody></table>` : empty("Sin usuarios.");
   $("#aVendedores").innerHTML = S.vendedores.length ? `<table><thead><tr><th>Vendedor</th><th class="n">Ventas registradas</th><th>Activo</th></tr></thead><tbody>
@@ -856,7 +857,7 @@ function recalc() {
 function updateVence() {
   const c = document.querySelector("input[name=cond]:checked")?.value, f = $("#nFecha").value;
   $("#nVence").textContent = !c ? "Seleccione si la venta es de contado o a crédito." : `Fecha de vencimiento del pago: ${fdate(addDays(f || today(), c === "CONTADO" ? 0 : DIAS_CREDITO))}. Si no se registra el pago antes de esa fecha, aparecerá en rojo como VENCIDO.`;
-  if (c === "CONTADO" && S.admin && !$("#nFPago").value) $("#nFPago").value = f || today();
+  if (c === "CONTADO" && S.full && !$("#nFPago").value) $("#nFPago").value = f || today();
 }
 function autoStatus() { if (!statusTouched) $("#nStatus").value = $("#nFPago").value && $("#nRef").value.trim() ? "VALIDADO" : "DESPACHADO"; }
 function validFecha(f, label) {
@@ -870,17 +871,17 @@ $("#formNuevo").addEventListener("submit", async ev => {
   ev.preventDefault(); msg("#nMsg", "", "");
   const fail = t => { msg("#nMsg", "err", t); $("#nMsg").scrollIntoView({ block: "nearest" }); };
   const fecha = $("#nFecha").value, cliente = $("#nCliente").value.trim().replace(/\s+/g, " "), nota = $("#nNota").value.trim().toUpperCase();
-  const responsable = S.admin ? $("#nResp").value : "VENDEDOR";
-  const vendedor_id = S.admin ? (responsable === "VENDEDOR" ? $("#nVend").value : null) : S.perfil.vendedor_id;
+  const responsable = S.full ? $("#nResp").value : "VENDEDOR";
+  const vendedor_id = S.full ? (responsable === "VENDEDOR" ? $("#nVend").value : null) : S.perfil.vendedor_id;
   const moneda = $("#nMoneda").value, condicion = document.querySelector("input[name=cond]:checked")?.value;
-  const status = S.admin ? $("#nStatus").value : "DESPACHADO";
-  const fecha_pago = S.admin && status !== "DESPACHADO" ? $("#nFPago").value : null, referencia = S.admin && status !== "DESPACHADO" ? $("#nRef").value.trim() : null;
+  const status = S.full ? $("#nStatus").value : "DESPACHADO";
+  const fecha_pago = S.full && status !== "DESPACHADO" ? $("#nFPago").value : null, referencia = S.full && status !== "DESPACHADO" ? $("#nRef").value.trim() : null;
   let e = validFecha(fecha, "fecha de despacho"); if (e) return fail(e);
   if (!cliente) return fail("Indique el nombre del cliente.");
   if (!nota) return fail("Indique el N° de factura o nota de entrega (escriba S/NT si no tiene).");
-  if (S.admin && !/^S\/?NT$/i.test(nota)) { const used = S.docs.find(d => (d.nota || "").toUpperCase() === nota); if (used) return fail(`El N° ${nota} ya está registrado para ${used.cliente} con fecha ${fdate(used.fecha)}. Verifique el número.`); }
+  if (S.full && !/^S\/?NT$/i.test(nota)) { const used = S.docs.find(d => (d.nota || "").toUpperCase() === nota); if (used) return fail(`El N° ${nota} ya está registrado para ${used.cliente} con fecha ${fdate(used.fecha)}. Verifique el número.`); }
   if (!responsable) return fail("Seleccione el responsable.");
-  if (responsable === "VENDEDOR" && !vendedor_id) return fail(S.admin ? "Seleccione el vendedor." : "Su usuario no está asociado a un vendedor. Pida al administrador que lo asocie.");
+  if (responsable === "VENDEDOR" && !vendedor_id) return fail(S.full ? "Seleccione el vendedor." : "Su usuario no está asociado a un vendedor. Pida al administrador que lo asocie.");
   if (!condicion) return fail("Indique si la venta es de contado o a crédito.");
   if (status === "VALIDADO" && (!fecha_pago || !referencia)) return fail("Para el status VALIDADO indique la fecha de pago y el número de referencia.");
   if (fecha_pago) { e = validFecha(fecha_pago, "fecha de pago"); if (e) return fail(e); }
