@@ -328,7 +328,7 @@ function suscribir() {
 /* ====================== Navegación ====================== */
 function tabsFor() {
   return S.full
-    ? [["reportes", "Reportes"], ["registro", "Registro de despachos"], ["nuevo", "Nuevo despacho"], ["cobranza", "Cuentas por cobrar"], ["comisiones", "Comisiones"], ["admin", "Administración"]]
+    ? [["reportes", "Reportes"], ["registro", "Registro de despachos"], ["nuevo", "Nuevo despacho"], ["cobranza", "Cuentas por cobrar"], ["comisiones", "Comisiones"], ...(S.admin ? [["admin", "Administración"]] : [])]
     : [["misventas", "Mis ventas y comisiones"], ["nuevo", "Nuevo despacho"]];
 }
 function buildNav() {
