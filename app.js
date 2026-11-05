@@ -285,7 +285,7 @@ async function cargarTodo() {
       fetchAll("despachos", "fecha"), fetchAll("vendedores", "nombre"), fetchAll("tasas_bcv", "fecha"),
       fetchAll("comisiones", "mes"), S.admin ? fetchAll("perfiles", "nombre") : Promise.resolve([]),
       fetchAll("clientes", "nombre"), fetchAll("productos", "umb"), sb.from("empresa").select("*").eq("id", 1).maybeSingle().then(r => r.data),
-      S.admin ? fetchAll("abonos", "creado_en") : Promise.resolve([]), fetchAll("notas_entrega", "emitida_en")
+      S.full ? fetchAll("abonos", "creado_en") : Promise.resolve([]), fetchAll("notas_entrega", "emitida_en")
     ]);
     S.docs = docs.map(d => ({ ...d, cantidad: num(d.cantidad), precio: num(d.precio), monto: num(d.monto), iva: !!d.iva }));
     S.byId = new Map(S.docs.map(d => [d.id, d]));
@@ -295,7 +295,7 @@ async function cargarTodo() {
     S.abonos = abos.map(a => ({ ...a, monto: num(a.monto) })); S.notas = nots;
     S.loaded = true; $("#dot").className = "dot on"; $("#banner").hidden = true;
     fillSelects(); refrescarUmbs(); render();
-    if (S.admin && !S.tasaAuto) { S.tasaAuto = true; tasaAutomatica(); }
+    if (S.full && !S.tasaAuto) { S.tasaAuto = true; tasaAutomatica(); }
   } catch (err) {
     $("#dot").className = "dot off";
     $("#banner").textContent = "No fue posible cargar la información: " + errTxt(err) + ". Verifique su conexión a internet.";
@@ -327,8 +327,7 @@ function suscribir() {
 
 /* ====================== Navegación ====================== */
 function tabsFor() {
-  if (S.operadora) return [["reportes", "Reportes"], ["nuevo", "Nuevo despacho"]];
-  return S.admin
+  return S.full
     ? [["reportes", "Reportes"], ["registro", "Registro de despachos"], ["nuevo", "Nuevo despacho"], ["cobranza", "Cuentas por cobrar"], ["comisiones", "Comisiones"], ["admin", "Administración"]]
     : [["misventas", "Mis ventas y comisiones"], ["nuevo", "Nuevo despacho"]];
 }
@@ -353,7 +352,7 @@ function goTab(t) {
 /* ====================== Render ====================== */
 function render() {
   if (!S.perfil) return;
-  if (S.admin) renderAlert();
+  if (S.full) renderAlert();
   $("#pLabel").textContent = periodLabel(); $("#pFecha").value = S.anchor;
   $$("[data-ptype]").forEach(b => b.setAttribute("aria-pressed", b.dataset.ptype === S.ptype));
   ({ reportes: renderReportes, registro: renderRegistro, cobranza: renderCobranza, comisiones: renderComisiones, misventas: renderMisVentas, admin: renderAdmin }[S.tab] || (() => {}))();
@@ -473,7 +472,7 @@ function renderRegistro() {
   const rows = base.filter(d => (!st || d.status === st) && (!rp || d.responsable === rp) && (!mo || mon(d) === mo) &&
     (!q || norm(d.cliente).includes(q) || norm(d.nota).includes(q) || norm(d.referencia).includes(q))).sort((a, b) => a.fecha.localeCompare(b.fecha) || String(a.nota).localeCompare(String(b.nota)));
   $("#tablaReg").innerHTML = tablaDespachos(rows, d =>
-    `<button class="btn small" data-nota="${d.id}" title="Ver o descargar la nota de entrega">Nota</button> ${d.status === "DESPACHADO" ? `<button class="btn small" data-pay="${d.id}">Cobrar</button> ` : ""}<button class="btn small" data-edit="${d.id}">Editar</button> <button class="btn small danger" data-del="${d.id}">Eliminar</button>`,
+    `<button class="btn small" data-nota="${d.id}" title="Ver o descargar la nota de entrega">Nota</button> ${d.status === "DESPACHADO" ? `<button class="btn small" data-pay="${d.id}">Cobrar</button> ` : ""}<button class="btn small" data-edit="${d.id}">Editar</button> ${S.admin ? `<button class="btn small danger" data-del="${d.id}">Eliminar</button>` : ""}`,
     base.length ? "Ningún registro coincide con los filtros." : "No hay despachos registrados en este período.");
 }
 function renderCobranza() {
@@ -571,7 +570,7 @@ function renderComisiones() {
 
   const hist = [...S.comisiones].sort((a, b) => b.mes.localeCompare(a.mes) || b.creado_en.localeCompare(a.creado_en));
   $("#cPagadas").innerHTML = hist.length ? `<table><thead><tr><th>Mes cobrado</th><th>Vendedor</th><th class="n">Ventas</th><th class="n">Base USD</th><th class="n">${PCT}% USD</th><th class="n">Tasa BCV</th><th class="n">Pagado Bs.</th><th>Pagado el</th><th>Referencia</th><th></th></tr></thead><tbody>
-    ${hist.map(p => `<tr><td>${monthName(p.mes.slice(0, 7))}</td><td>${esc(vendName(p.vendedor_id))}</td><td class="n">${p.lineas}</td><td class="n">${nf.format(p.base_usd)}</td><td class="n">${nf.format(p.comision_usd)}</td><td class="n">${nf4.format(p.tasa_bcv)}<span class="sub">${fdate(p.fecha_tasa)}</span></td><td class="n"><b>${nf.format(p.comision_bs)}</b></td><td>${fdate(p.pagado_en)}</td><td>${esc(p.referencia_pago) || "—"}</td><td><button class="btn small danger" data-anular="${p.id}">Anular</button></td></tr>`).join("")}
+    ${hist.map(p => `<tr><td>${monthName(p.mes.slice(0, 7))}</td><td>${esc(vendName(p.vendedor_id))}</td><td class="n">${p.lineas}</td><td class="n">${nf.format(p.base_usd)}</td><td class="n">${nf.format(p.comision_usd)}</td><td class="n">${nf4.format(p.tasa_bcv)}<span class="sub">${fdate(p.fecha_tasa)}</span></td><td class="n"><b>${nf.format(p.comision_bs)}</b></td><td>${fdate(p.pagado_en)}</td><td>${esc(p.referencia_pago) || "—"}</td><td>${S.admin ? `<button class="btn small danger" data-anular="${p.id}">Anular</button>` : ""}</td></tr>`).join("")}
     </tbody></table>` : empty("Todavía no se ha pagado ninguna comisión.");
 }
 async function guardarTasa(fecha, tasa, fuente) {
@@ -1116,7 +1115,7 @@ function abrirAbonos(key) {
   abCliente = key; const lista = S.abonos.filter(a => norm(a.cliente) === key).sort((a, b) => b.fecha.localeCompare(a.fecha) || String(b.creado_en).localeCompare(String(a.creado_en)));
   $("#abTitulo").textContent = "Abonos · " + (lista[0]?.cliente || "");
   $("#abMsg").hidden = true;
-  $("#abLista").innerHTML = lista.length ? `<table><thead><tr><th>Fecha</th><th>Nota</th><th class="n">Monto</th><th>Referencia</th><th>Estado</th><th></th></tr></thead><tbody>${lista.map(a => `<tr${a.anulado ? ' style="opacity:.55"' : ""}><td class="num" style="text-align:left">${fdate(a.fecha)}</td><td><span class="code">${esc(a.nota)}</span></td><td class="n">${moneyHTML(a.monto, a.moneda === "BS" ? "BS" : "USD")}</td><td>${esc(a.referencia)}</td><td>${a.anulado ? `<span class="chip VENCIDO">ANULADO</span><span class="sub">${esc(a.anulado_motivo || "")}</span>` : a.completo_ids ? `<span class="chip VALIDADO">Cerró la nota</span>` : "Abono"}</td><td>${a.anulado ? "" : `<button class="btn small danger" type="button" data-anabono="${a.id}">Anular</button>`}</td></tr>`).join("")}</tbody></table>` : empty("Este cliente no tiene abonos registrados.");
+  $("#abLista").innerHTML = lista.length ? `<table><thead><tr><th>Fecha</th><th>Nota</th><th class="n">Monto</th><th>Referencia</th><th>Estado</th><th></th></tr></thead><tbody>${lista.map(a => `<tr${a.anulado ? ' style="opacity:.55"' : ""}><td class="num" style="text-align:left">${fdate(a.fecha)}</td><td><span class="code">${esc(a.nota)}</span></td><td class="n">${moneyHTML(a.monto, a.moneda === "BS" ? "BS" : "USD")}</td><td>${esc(a.referencia)}</td><td>${a.anulado ? `<span class="chip VENCIDO">ANULADO</span><span class="sub">${esc(a.anulado_motivo || "")}</span>` : a.completo_ids ? `<span class="chip VALIDADO">Cerró la nota</span>` : "Abono"}</td><td>${a.anulado || !S.admin ? "" : `<button class="btn small danger" type="button" data-anabono="${a.id}">Anular</button>`}</td></tr>`).join("")}</tbody></table>` : empty("Este cliente no tiene abonos registrados.");
   if (!$("#dlgAbonos").open) $("#dlgAbonos").showModal();
 }
 async function anularAbono(id) {
