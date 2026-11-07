@@ -420,11 +420,25 @@ function kpiBlock(rows, m) {
     <div class="kpi k-bad"><span class="lbl">Vencido a la fecha</span><span class="val">${money(ven, m)}</span><span class="sub">${r.filter(isVencido).length} líneas con plazo cumplido</span></div>
   </div>`;
 }
+/** Resumen de lo que salió sin costo (reposición, obsequio, degustación) y su valor referencial en USD. No suma a ventas ni a cuentas por cobrar. */
+function renderSinCosto(rows) {
+  const sc = rows.filter(d => SIN_COBRO.includes(d.responsable));
+  if (!sc.length) { $("#porSin").innerHTML = empty("En este período no salió mercancía sin costo."); return; }
+  const fila = (nombre, ds) => {
+    const porUmb = new Map(); ds.forEach(d => porUmb.set(d.umb, (porUmb.get(d.umb) || 0) + d.cantidad));
+    const usd = ds.reduce((a, d) => a + num(d.valor_ref), 0), sinValor = ds.filter(d => !num(d.precio_ref)).length;
+    return `<tr><td><b>${esc(nombre)}</b></td><td class="n">${ds.length}</td><td>${[...porUmb].map(([u, c]) => `${nf.format(c).replace(/,00$/, "")} ${esc(u)}`).join(" · ")}</td><td class="n"><b>${money(usd, "USD")}</b>${sinValor ? `<small class="muted"> · ${sinValor} sin valor</small>` : ""}</td></tr>`;
+  };
+  $("#porSin").innerHTML = `<table><thead><tr><th>Concepto</th><th class="n">Líneas</th><th>Unidades</th><th class="n">Valor referencial USD</th></tr></thead><tbody>
+    ${SIN_COBRO.map(r => [r, sc.filter(d => d.responsable === r)]).filter(([, ds]) => ds.length).map(([r, ds]) => fila(r, ds)).join("")}
+    ${fila("TOTAL", sc)}</tbody></table>`;
+}
 function renderReportes() {
   if (!S.loaded) { $("#kpis").innerHTML = empty("Cargando información…"); return; }
   const rows = inPeriod();
-  if (!rows.length) { $("#kpis").innerHTML = empty("No hay despachos registrados en este período."); ["#chart", "#porCond", "#porResp", "#porUmb", "#porCli"].forEach(s => $(s).innerHTML = ""); return; }
+  if (!rows.length) { $("#kpis").innerHTML = empty("No hay despachos registrados en este período."); ["#chart", "#porCond", "#porResp", "#porUmb", "#porCli", "#porSin"].forEach(s => $(s).innerHTML = ""); return; }
   $("#kpis").innerHTML = kpiBlock(rows, "USD") + kpiBlock(rows, "BS");
+  renderSinCosto(rows);
   const [s, e] = range();
   if (S.ptype === "dia") {
     $("#chartTitle").textContent = "Ventas del día por condición (USD)";
@@ -822,11 +836,11 @@ function addLine() {
   const optTxt = u => precioUsd(u) != null ? `${descProd(u)} (${u})` : u;
   el.innerHTML = `<label class="f">Producto <span class="req">*</span><select class="umb" id="l${i}-umb">${UMBS.map(c => `<option value="${esc(c)}">${esc(optTxt(c))}</option>`).join("")}</select></label>
     <label class="f">Cantidad <span class="req">*</span><input class="cant" id="l${i}-cant" type="number" min="0" step="any" inputmode="decimal"></label>
-    <label class="f">Precio sin IVA <span class="req">*</span><input class="precio" id="l${i}-precio" type="number" min="0" step="0.01" inputmode="decimal"></label>
+    <label class="f"><span class="lblprecio">Precio sin IVA</span> <span class="req">*</span><input class="precio" id="l${i}-precio" type="number" min="0" step="0.01" inputmode="decimal"></label>
     <label class="ivachk"><input type="checkbox" class="iva"><span>+ IVA ${IVA_PCT}%</span></label>
     <div class="monto" aria-live="polite">—</div>
     <button type="button" class="iconbtn" data-rm aria-label="Quitar producto" title="Quitar producto">✕</button><div class="hint"></div>`;
-  $("#lines").append(el); fillPrice(el, true); recalc();
+  $("#lines").append(el); fillPrice(el, true); aplicarSinCobro(); recalc();
 }
 function fillPrice(el, force) {
   const pr = el.querySelector(".precio"); if (!force && pr.dataset.touched) return;
@@ -842,6 +856,18 @@ function totalesIva(lineas) {
   const iva = round2(baseImp * IVA_PCT / 100);
   return { sub, baseImp, iva, total: round2(sub + iva) };
 }
+/** Reposición, obsequio y degustación: no se cobran. Quedan VALIDADO y el monto es solo un valor referencial en USD. */
+const esSinCobro = () => S.full && SIN_COBRO.includes($("#nResp").value);
+function aplicarSinCobro() {
+  const on = esSinCobro();
+  if (on) { $("#nMoneda").value = "USD"; $("#nStatus").value = "VALIDADO"; statusTouched = true; }
+  $("#nMoneda").disabled = on; $("#nStatus").disabled = on;
+  $$(".line").forEach(el => {
+    el.querySelector(".lblprecio").textContent = on ? "Valor referencial USD (no se cobra)" : "Precio sin IVA";
+    const iva = el.querySelector(".iva"); if (on) iva.checked = false; iva.disabled = on;
+  });
+  $("#nSinCobroAviso").hidden = !on;
+}
 function recalc() {
   const m = $("#nMoneda").value, lineas = [];
   $$(".line").forEach(el => {
@@ -851,7 +877,7 @@ function recalc() {
     if (v != null) lineas.push({ total: v, iva: conIva });
   });
   const t = totalesIva(lineas), sufijo = m === "BS" ? " (BCV)" : "";
-  $("#nTotal").textContent = money(t.total, m) + sufijo;
+  $("#nTotal").textContent = esSinCobro() ? `Sin costo · valor referencial ${money(t.total, "USD")}` : money(t.total, m) + sufijo;
   $("#nDesglose").textContent = t.iva ? `Subtotal ${money(t.sub, m)} · Base imponible ${money(t.baseImp, m)} · IVA ${IVA_PCT}% ${money(t.iva, m)}` : "Sin IVA";
 }
 function updateVence() {
@@ -874,7 +900,7 @@ $("#formNuevo").addEventListener("submit", async ev => {
   const responsable = S.full ? $("#nResp").value : "VENDEDOR";
   const vendedor_id = S.full ? (responsable === "VENDEDOR" ? $("#nVend").value : null) : S.perfil.vendedor_id;
   const moneda = $("#nMoneda").value, condicion = document.querySelector("input[name=cond]:checked")?.value;
-  const status = S.full ? $("#nStatus").value : "DESPACHADO";
+  const sinCobro = SIN_COBRO.includes(responsable), status = sinCobro ? "VALIDADO" : S.full ? $("#nStatus").value : "DESPACHADO";
   const exento = status === "VALIDADO" && SIN_COBRO.includes(responsable); // reposición, obsequio y degustación no se cobran
   const fecha_pago = S.full && status !== "DESPACHADO" ? ($("#nFPago").value || (exento ? fecha : "")) : null, referencia = S.full && status !== "DESPACHADO" ? ($("#nRef").value.trim() || (exento ? "SIN COBRO" : "")) : null;
   let e = validFecha(fecha, "fecha de despacho"); if (e) return fail(e);
@@ -892,7 +918,7 @@ $("#formNuevo").addEventListener("submit", async ev => {
     if (!(cantidad > 0)) return fail(`Indique la cantidad de ${umb}.`);
     if (!(precio >= 0)) return fail(`Indique el precio de ${umb}.`);
     if (moneda === "USD" && precio > 100) return fail(`El precio de ${umb} (${nf.format(precio)}) parece estar en bolívares. Cambie la moneda a Bs. o corrija el precio.`);
-    filas.push({ fecha, cliente, cantidad, umb, precio, moneda, status, fecha_pago, referencia, nota: /^S\/?NT$/i.test(nota) ? "S/NT" : nota, responsable, observacion: $("#nObs").value.trim() || null, condicion, vendedor_id, iva: el.querySelector(".iva").checked });
+    filas.push({ fecha, cliente, cantidad, umb, precio: sinCobro ? 0 : precio, precio_ref: sinCobro ? precio : 0, moneda, status, fecha_pago, referencia, nota: /^S\/?NT$/i.test(nota) ? "S/NT" : nota, responsable, observacion: $("#nObs").value.trim() || null, condicion, vendedor_id, iva: sinCobro ? false : el.querySelector(".iva").checked });
   }
   if (!filas.length) return fail("Agregue al menos un producto.");
   if (!S.clientes.has(norm(cliente)) && !S.docs.some(d => norm(d.cliente) === norm(cliente))) {
@@ -1058,7 +1084,7 @@ $("#nCliente").addEventListener("change", () => $$(".line").forEach(el => fillPr
 $("#nMoneda").addEventListener("change", () => { $$(".line").forEach(el => fillPrice(el, false)); recalc(); });
 $("#nNota").addEventListener("input", () => notaTouched = true);
 $("#nFecha").addEventListener("change", () => { updateVence(); $$(".line").forEach(el => fillPrice(el, false)); recalc(); });
-$("#nResp").addEventListener("change", () => $("#nVendWrap").hidden = $("#nResp").value !== "VENDEDOR");
+$("#nResp").addEventListener("change", () => { $("#nVendWrap").hidden = $("#nResp").value !== "VENDEDOR"; aplicarSinCobro(); $$(".line").forEach(el => fillPrice(el, false)); recalc(); });
 $$("input[name=cond]").forEach(r => r.addEventListener("change", () => { updateVence(); autoStatus(); }));
 $("#nStatus").addEventListener("change", () => statusTouched = true);
 ["#nFPago", "#nRef"].forEach(s => $(s).addEventListener("input", autoStatus));
@@ -1135,7 +1161,7 @@ function openEdit(id) {
   editId = id; $("#edSub").textContent = `${d.nota} · ${d.cliente}`;
   $("#eFecha").value = d.fecha; $("#eCliente").value = d.cliente; $("#eCant").value = d.cantidad; $("#eUmb").value = d.umb; $("#ePrecio").value = d.precio;
   $("#eIva").checked = !!d.iva; $("#eMon").value = mon(d); $("#eCond").value = condOf(d); $("#eStatus").value = d.status; $("#eFPago").value = d.fecha_pago || "";
-  $("#eRef").value = d.referencia || ""; $("#eNota").value = d.nota || ""; $("#eResp").value = d.responsable; $("#eVend").value = d.vendedor_id || ""; $("#eObs").value = d.observacion || "";
+  $("#eRef").value = d.referencia || ""; $("#eNota").value = d.nota || ""; $("#eResp").value = d.responsable; $("#ePrecioRef").value = d.precio_ref ? d.precio_ref : ""; editSinCobro(); $("#eVend").value = d.vendedor_id || ""; $("#eObs").value = d.observacion || "";
   $("#edMsg").hidden = true; editTotal(); $("#dlgEdit").showModal();
 }
 function editTotal() {
@@ -1143,24 +1169,28 @@ function editTotal() {
   $("#edTotal").textContent = iva ? `Base ${money(base, m)} + IVA ${IVA_PCT}% ${money(iva, m)} = ${money(base + iva, m)}` : "Monto total (sin IVA): " + money(base, m);
 }
 ["#eCant", "#ePrecio", "#eMon", "#eIva"].forEach(s => $(s).addEventListener("input", editTotal));
+const editSinCobro = () => { const on = SIN_COBRO.includes($("#eResp").value); $("#ePrecioRefWrap").hidden = !on; $("#ePrecio").closest("label").hidden = on; };
+$("#eResp").addEventListener("change", editSinCobro);
 $("#formEdit").addEventListener("submit", async ev => {
   if (ev.submitter?.value !== "ok") return; ev.preventDefault();
   const fail = t => msg("#edMsg", "err", t);
-  const fecha = $("#eFecha").value, cantidad = parseFloat($("#eCant").value), precio = parseFloat($("#ePrecio").value), status = $("#eStatus").value;
-  const fecha_pago = $("#eFPago").value || null, referencia = $("#eRef").value.trim() || null, responsable = $("#eResp").value, vendedor_id = $("#eVend").value || null;
+  const responsable = $("#eResp").value, sinCobro = SIN_COBRO.includes(responsable);
+  const fecha = $("#eFecha").value, cantidad = parseFloat($("#eCant").value), precio = sinCobro ? 0 : parseFloat($("#ePrecio").value), precioRef = sinCobro ? (parseFloat($("#ePrecioRef").value) || 0) : 0;
+  const status = sinCobro && $("#eStatus").value === "DESPACHADO" ? "VALIDADO" : $("#eStatus").value; // lo que no se cobra no queda pendiente
+  const fecha_pago = $("#eFPago").value || null, referencia = $("#eRef").value.trim() || null, vendedor_id = $("#eVend").value || null;
   let e = validFecha(fecha, "fecha de despacho"); if (e) return fail(e);
   if (!$("#eCliente").value.trim()) return fail("Indique el cliente.");
   if (!(cantidad > 0)) return fail("Indique la cantidad.");
   if (!(precio >= 0)) return fail("Indique el precio.");
   if ($("#eMon").value === "USD" && precio > 100) return fail("El precio parece estar en bolívares. Cambie la moneda a Bs. o corrija el precio.");
   if (status === "COMISION") return fail("El status COMISIÓN lo asigna el sistema al registrar el pago de la comisión en la pestaña Comisiones.");
-  const exento = status === "VALIDADO" && (precio === 0 || SIN_COBRO.includes(responsable)); // ventas de $0 o sin cobro no llevan referencia de pago
+  const exento = status === "VALIDADO" && (precio === 0 || sinCobro); // ventas de $0 o sin cobro no llevan referencia de pago
   if (status === "VALIDADO" && !exento && (!fecha_pago || !referencia)) return fail("Para el status VALIDADO indique la fecha de pago y el número de referencia.");
   if (fecha_pago) { e = validFecha(fecha_pago, "fecha de pago"); if (e) return fail(e); }
   if (responsable === "VENDEDOR" && !vendedor_id) return fail("Seleccione el vendedor de esta venta.");
   $("#edSave").disabled = true;
   const { error } = await sb.from("despachos").update({
-    fecha, cliente: $("#eCliente").value.trim().replace(/\s+/g, " "), cantidad, umb: $("#eUmb").value, precio, moneda: $("#eMon").value,
+    fecha, cliente: $("#eCliente").value.trim().replace(/\s+/g, " "), cantidad, umb: $("#eUmb").value, precio, precio_ref: precioRef, moneda: $("#eMon").value,
     status, fecha_pago: fecha_pago || (exento ? fecha : null), referencia: referencia || (exento ? "SIN COBRO" : null), nota: $("#eNota").value.trim().toUpperCase(), responsable, vendedor_id: responsable === "VENDEDOR" ? vendedor_id : null,
     observacion: $("#eObs").value.trim() || null, condicion: $("#eCond").value, iva: $("#eIva").checked
   }).eq("id", editId);
