@@ -3,6 +3,7 @@
 
 /* ====================== Listas (hoja "data" del Excel) ====================== */
 let UMBS = ["CJ","GALLETAS","KG","KG PMB","KG PMCH","KG PMV","MAQUILA","MHCH","MHM","MINI","PMB","PMCH","PMS","PMV","PMM","PROMO","UND","WPMCH","WPMV","WPMB"];
+const SIN_COBRO = ["REPOSICION", "OBSEQUIO", "DEGUSTACION"];
 const RESPONSABLES = ["CHOCOTENTACION","TIENDAS","DEGUSTACION","OBSEQUIO","REPOSICION","VENDEDOR"];
 const STATUS = ["DESPACHADO","VALIDADO","COMISION"];
 const STATUS_TXT = { DESPACHADO: "DESPACHADO", VALIDADO: "VALIDADO", COMISION: "COMISIÓN" };
@@ -874,7 +875,8 @@ $("#formNuevo").addEventListener("submit", async ev => {
   const vendedor_id = S.full ? (responsable === "VENDEDOR" ? $("#nVend").value : null) : S.perfil.vendedor_id;
   const moneda = $("#nMoneda").value, condicion = document.querySelector("input[name=cond]:checked")?.value;
   const status = S.full ? $("#nStatus").value : "DESPACHADO";
-  const fecha_pago = S.full && status !== "DESPACHADO" ? $("#nFPago").value : null, referencia = S.full && status !== "DESPACHADO" ? $("#nRef").value.trim() : null;
+  const exento = status === "VALIDADO" && SIN_COBRO.includes(responsable); // reposición, obsequio y degustación no se cobran
+  const fecha_pago = S.full && status !== "DESPACHADO" ? ($("#nFPago").value || (exento ? fecha : "")) : null, referencia = S.full && status !== "DESPACHADO" ? ($("#nRef").value.trim() || (exento ? "SIN COBRO" : "")) : null;
   let e = validFecha(fecha, "fecha de despacho"); if (e) return fail(e);
   if (!cliente) return fail("Indique el nombre del cliente.");
   if (!nota) return fail("Indique el N° de factura o nota de entrega (escriba S/NT si no tiene).");
@@ -1152,19 +1154,44 @@ $("#formEdit").addEventListener("submit", async ev => {
   if (!(precio >= 0)) return fail("Indique el precio.");
   if ($("#eMon").value === "USD" && precio > 100) return fail("El precio parece estar en bolívares. Cambie la moneda a Bs. o corrija el precio.");
   if (status === "COMISION") return fail("El status COMISIÓN lo asigna el sistema al registrar el pago de la comisión en la pestaña Comisiones.");
-  if (status === "VALIDADO" && (!fecha_pago || !referencia)) return fail("Para el status VALIDADO indique la fecha de pago y el número de referencia.");
+  const exento = status === "VALIDADO" && (precio === 0 || SIN_COBRO.includes(responsable)); // ventas de $0 o sin cobro no llevan referencia de pago
+  if (status === "VALIDADO" && !exento && (!fecha_pago || !referencia)) return fail("Para el status VALIDADO indique la fecha de pago y el número de referencia.");
   if (fecha_pago) { e = validFecha(fecha_pago, "fecha de pago"); if (e) return fail(e); }
   if (responsable === "VENDEDOR" && !vendedor_id) return fail("Seleccione el vendedor de esta venta.");
   $("#edSave").disabled = true;
   const { error } = await sb.from("despachos").update({
     fecha, cliente: $("#eCliente").value.trim().replace(/\s+/g, " "), cantidad, umb: $("#eUmb").value, precio, moneda: $("#eMon").value,
-    status, fecha_pago, referencia, nota: $("#eNota").value.trim().toUpperCase(), responsable, vendedor_id: responsable === "VENDEDOR" ? vendedor_id : null,
+    status, fecha_pago: fecha_pago || (exento ? fecha : null), referencia: referencia || (exento ? "SIN COBRO" : null), nota: $("#eNota").value.trim().toUpperCase(), responsable, vendedor_id: responsable === "VENDEDOR" ? vendedor_id : null,
     observacion: $("#eObs").value.trim() || null, condicion: $("#eCond").value, iva: $("#eIva").checked
   }).eq("id", editId);
   $("#edSave").disabled = false;
   if (error) return fail("No se pudo guardar: " + errTxt(error));
   $("#dlgEdit").close(); toast("Registro actualizado."); cargarTodo();
 });
+
+/* ====================== Ajuste masivo de status ====================== */
+function ajParams(aplicar) {
+  return { p_responsable: $("#ajResp").value, p_desde: $("#ajDesde").value || null, p_hasta: $("#ajHasta").value || null,
+    p_referencia: $("#ajRef").value.trim(), p_fecha_pago: $("#ajFecha").value || null, p_aplicar: aplicar };
+}
+const ajTxt = r => `${r.lineas} ${r.lineas === 1 ? "línea" : "líneas"} (${r.notas} ${r.notas === 1 ? "nota" : "notas"}) · USD ${nf.format(r.usd)}${+r.bs ? " · Bs. " + nf.format(r.bs) : ""}` + (r.excluidas_con_abono ? ` · ${r.excluidas_con_abono} líneas con abonos parciales no se tocan` : "");
+$("#ajPrevia").addEventListener("click", async () => {
+  if (!ajParams(false).p_referencia) return msg("#ajMsg", "err", "Indique la referencia del ajuste (por ejemplo: AJUSTE).");
+  $("#ajPrevia").disabled = true;
+  const { data, error } = await sb.rpc("ajuste_masivo", ajParams(false));
+  $("#ajPrevia").disabled = false;
+  if (error) return msg("#ajMsg", "err", errTxt(error));
+  $("#ajAplicar").disabled = !data.lineas; $("#ajAplicar").hidden = false;
+  msg("#ajMsg", data.lineas ? "ok" : "err", data.lineas ? `Se cambiarán de DESPACHADO a VALIDADO: ${ajTxt(data)}.` + ($("#ajResp").value === "VENDEDOR" ? " Atención: son ventas de vendedores y pasarán a ser comisionables." : "") : "No hay ventas DESPACHADAS que coincidan con ese filtro.");
+});
+$("#ajAplicar").addEventListener("click", async () => {
+  if (!confirm("¿Aplicar el cambio masivo? Quedará registrado en el historial.")) return;
+  $("#ajAplicar").disabled = true;
+  const { data, error } = await sb.rpc("ajuste_masivo", ajParams(true));
+  if (error) { $("#ajAplicar").disabled = false; return msg("#ajMsg", "err", errTxt(error)); }
+  $("#ajAplicar").hidden = true; msg("#ajMsg", "ok", `Listo. Se pasaron a VALIDADO ${ajTxt(data)}.`); cargarTodo();
+});
+["#ajResp", "#ajDesde", "#ajHasta", "#ajRef", "#ajFecha"].forEach(s => $(s).addEventListener("input", () => { $("#ajAplicar").hidden = true; msg("#ajMsg", "", ""); }));
 
 /* ====================== Acciones en tablas ====================== */
 let armed = null;
@@ -1260,7 +1287,7 @@ $("#alertaVer").addEventListener("click", () => goTab("cobranza"));
 /* ====================== Inicio ====================== */
 const opts = (arr, txt) => arr.map(v => `<option value="${v}">${txt ? txt[v] : v}</option>`).join("");
 $("#nResp").innerHTML = `<option value="" disabled selected>Seleccione…</option>` + opts(RESPONSABLES);
-$("#eResp").innerHTML = opts(RESPONSABLES); $("#fResp").innerHTML += opts(RESPONSABLES);
+$("#eResp").innerHTML = opts(RESPONSABLES); $("#ajResp").innerHTML = opts(RESPONSABLES); $("#fResp").innerHTML += opts(RESPONSABLES);
 $("#nStatus").innerHTML = opts(["DESPACHADO", "VALIDADO"], STATUS_TXT); $("#eStatus").innerHTML = opts(STATUS, STATUS_TXT); $("#fStatus").innerHTML += opts(STATUS, STATUS_TXT);
 $("#eUmb").innerHTML = opts(UMBS);
 $("#nFecha").value = today(); updateVence(); addLine();
