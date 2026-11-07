@@ -490,23 +490,53 @@ function renderRegistro() {
     `<button class="btn small" data-nota="${d.id}" title="Ver o descargar la nota de entrega">Nota</button> ${d.status === "DESPACHADO" ? `<button class="btn small" data-pay="${d.id}">Cobrar</button> ` : ""}<button class="btn small" data-edit="${d.id}">Editar</button> ${S.admin ? `<button class="btn small danger" data-del="${d.id}">Eliminar</button>` : ""}`,
     base.length ? "Ningún registro coincide con los filtros." : "No hay despachos registrados en este período.");
 }
+/** Filtros de Cuentas por cobrar (se aplican por nota pendiente). */
+function cobroFiltros() {
+  return { q: norm($("#cbQ").value), sit: $("#cbSit").value, mon: $("#cbMon").value, cond: $("#cbCond").value, resp: $("#cbResp").value, vend: $("#cbVend").value,
+    desde: $("#cbDesde").value, hasta: $("#cbHasta").value, orden: $("#cbOrden").value };
+}
+function cobroPasa(s, f) {
+  const l0 = s.lines[0], dd = diffDays(today(), s.vence);
+  if (f.q && !(norm(s.cliente).includes(f.q) || norm(s.nota).includes(f.q) || s.lines.some(d => norm(d.referencia).includes(f.q)))) return false;
+  if (f.mon && s.m !== f.mon) return false;
+  if (f.cond && !s.lines.some(d => condOf(d) === f.cond)) return false;
+  if (f.resp && l0.responsable !== f.resp) return false;
+  if (f.vend && l0.vendedor_id !== f.vend) return false;
+  if (f.desde && l0.fecha < f.desde) return false;
+  if (f.hasta && l0.fecha > f.hasta) return false;
+  if (f.sit === "VENCIDO" && !(dd > 0)) return false;
+  if (f.sit === "VENCIDO30" && !(dd > 30)) return false;
+  if (f.sit === "VENCIDO60" && !(dd > 60)) return false;
+  if (f.sit === "PORVENCER" && !(dd <= 0)) return false;
+  return true;
+}
+function cobroLimpiar() { ["#cbQ", "#cbSit", "#cbMon", "#cbCond", "#cbResp", "#cbVend", "#cbDesde", "#cbHasta"].forEach(x => $(x).value = ""); $("#cbOrden").value = "vence"; renderCobranza(); }
+["#cbQ", "#cbSit", "#cbMon", "#cbCond", "#cbResp", "#cbVend", "#cbDesde", "#cbHasta", "#cbOrden"].forEach(x => $(x).addEventListener("input", () => renderCobranza()));
+$("#cbLimpiar").addEventListener("click", cobroLimpiar);
 function renderCobranza() {
   if (!S.loaded) { $("#tablaCobro").innerHTML = empty("Cargando información…"); return; }
+  if (!$("#cbVend").dataset.lleno || $("#cbVend").dataset.lleno !== String(S.vendedores.length)) {
+    const v = $("#cbVend").value; $("#cbVend").innerHTML = `<option value="">Todos</option>` + S.vendedores.map(x => `<option value="${x.id}">${esc(x.nombre)}</option>`).join(""); $("#cbVend").value = v; $("#cbVend").dataset.lleno = S.vendedores.length;
+  }
+  const filtros = cobroFiltros(), hayFiltro = Object.entries(filtros).some(([k, v]) => k !== "orden" && v);
+  const todos = saldosPendientes(), pend = todos.filter(x => cobroPasa(x, filtros));
+  $("#cbLimpiar").hidden = !hayFiltro && filtros.orden === "vence";
   const g = new Map();
-  for (const s of saldosPendientes()) {
+  for (const s of pend) {
     const k = norm(s.cliente), o = g.get(k) || { cliente: s.cliente, key: k, USD: 0, BS: 0, vU: 0, vB: 0, lineas: 0, notas: [], vence: s.vence, conds: new Set(), abonado: { USD: 0, BS: 0 } };
     o[s.m] += s.saldo; if (s.vencido) o[s.m === "BS" ? "vB" : "vU"] += s.saldo;
     o.lineas += s.lines.length; o.notas.push(s); o.abonado[s.m] += s.abonado;
     s.lines.forEach(d => o.conds.add(COND_TXT[condOf(d)])); if (s.vence < o.vence) o.vence = s.vence; g.set(k, o);
   }
-  const list = [...g.values()].sort((a, b) => a.vence.localeCompare(b.vence));
+  const ord = { vence: (a, b) => a.vence.localeCompare(b.vence), monto: (a, b) => (b.USD - a.USD) || (b.BS - a.BS), nombre: (a, b) => a.cliente.localeCompare(b.cliente, "es") };
+  const list = [...g.values()].sort(ord[filtros.orden] || ord.vence);
   const T = list.reduce((a, o) => ({ USD: a.USD + o.USD, BS: a.BS + o.BS, vU: a.vU + o.vU, vB: a.vB + o.vB }), { USD: 0, BS: 0, vU: 0, vB: 0 });
   $("#cobroKpis").innerHTML = `
-    <div class="kpi k-pend"><span class="lbl">Total por cobrar · USD</span><span class="val">${money(T.USD, "USD")}</span><span class="sub">Con IVA y menos abonos</span></div>
-    <div class="kpi k-pend"><span class="lbl">Total por cobrar · Bs. BCV</span><span class="val">${money(T.BS, "BS")}</span><span class="sub">Con IVA y menos abonos</span></div>
-    <div class="kpi k-bad"><span class="lbl">Vencido · USD</span><span class="val">${money(T.vU, "USD")}</span></div>
-    <div class="kpi k-bad"><span class="lbl">Vencido · Bs. BCV</span><span class="val">${money(T.vB, "BS")}</span></div>`;
-  if (!list.length) { $("#tablaCobro").innerHTML = empty("No hay cuentas pendientes por cobrar."); return; }
+    <div class="kpi k-pend"><span class="lbl">Total por cobrar · USD${hayFiltro ? " (filtrado)" : ""}</span><span class="val">${money(T.USD, "USD")}</span><span class="sub">Con IVA y menos abonos</span></div>
+    <div class="kpi k-pend"><span class="lbl">Total por cobrar · Bs. BCV${hayFiltro ? " (filtrado)" : ""}</span><span class="val">${money(T.BS, "BS")}</span><span class="sub">Con IVA y menos abonos</span></div>
+    <div class="kpi k-bad"><span class="lbl">Vencido · USD${hayFiltro ? " (filtrado)" : ""}</span><span class="val">${money(T.vU, "USD")}</span></div>
+    <div class="kpi k-bad"><span class="lbl">Vencido · Bs. BCV${hayFiltro ? " (filtrado)" : ""}</span><span class="val">${money(T.vB, "BS")}</span></div>`;
+  if (!list.length) { $("#tablaCobro").innerHTML = empty(hayFiltro ? "Ninguna cuenta coincide con esos filtros. Pulse «Limpiar filtros»." : "No hay cuentas pendientes por cobrar."); return; }
   const conAbonos = new Set(S.abonos.map(a => norm(a.cliente)));
   const notaChip = s => `<span class="code">${esc(s.nota)}</span>${s.iva ? ` <span class="chip PORVENCER" title="Incluye IVA ${nf.format(s.iva)}">+IVA</span>` : ""}${s.abonado ? `<span class="sub">abonó ${money(s.abonado, s.m)} · saldo ${money(s.saldo, s.m)}</span>` : ""}`;
   $("#tablaCobro").innerHTML = `<table><thead><tr><th>Cliente</th><th>Notas / facturas pendientes</th><th>Condición</th><th class="n">Por cobrar USD</th><th class="n">Por cobrar Bs. BCV</th><th>Vence</th><th>Situación</th><th></th></tr></thead><tbody>
@@ -517,7 +547,7 @@ function renderCobranza() {
     <td class="num" style="text-align:left">${fdate(o.vence)}</td>
     <td>${venc ? `<span class="chip VENCIDO">VENCIDO · ${dd} ${dd === 1 ? "día" : "días"} de atraso</span>` : `<span class="chip PORVENCER">${dd === 0 ? "Vence hoy" : `Vence en ${-dd} ${dd === -1 ? "día" : "días"}`}</span>`}</td>
     <td style="white-space:nowrap"><button class="btn small primary" data-paycli="${esc(o.key)}">Registrar pago</button>${conAbonos.has(o.key) ? ` <button class="btn small" data-abonos="${esc(o.key)}">Abonos</button>` : ""}</td></tr>`; }).join("")}
-  </tbody><tfoot><tr><td colspan="3">${list.length} clientes con saldo pendiente</td><td class="n">${nf.format(T.USD)}</td><td class="n">${nf.format(T.BS)}</td><td colspan="3"></td></tr></tfoot></table>`;
+  </tbody><tfoot><tr><td colspan="3">${list.length} clientes con saldo pendiente${hayFiltro ? ` · filtrado (${pend.length} de ${todos.length} notas)` : ""}</td><td class="n">${nf.format(T.USD)}</td><td class="n">${nf.format(T.BS)}</td><td colspan="3"></td></tr></tfoot></table>`;
 }
 
 /* ====================== Comisiones (administrador) ====================== */

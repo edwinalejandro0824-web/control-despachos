@@ -198,6 +198,18 @@
         <h2>Cuentas por cobrar</h2>
         <p class="lead">Todos los despachos con status DESPACHADO, de cualquier fecha, agrupados por cliente. Los montos incluyen el IVA y descuentan los abonos. En rojo: pagos vencidos. Contado vence el mismo día; crédito vence a los 7 días.</p>
       </div>
+      <div class="filters" id="cbFiltros">
+        <label class="f grow">Buscar<input id="cbQ" type="search" placeholder="Cliente, N° de factura o nota, referencia" autocomplete="off"></label>
+        <label class="f">Situación<select id="cbSit"><option value="">Todas</option><option value="VENCIDO">Vencidas</option><option value="VENCIDO30">Vencidas hace más de 30 días</option><option value="VENCIDO60">Vencidas hace más de 60 días</option><option value="PORVENCER">Por vencer (aún en plazo)</option></select></label>
+        <label class="f">Moneda<select id="cbMon"><option value="">Todas</option><option value="USD">USD</option><option value="BS">Bs. (BCV)</option></select></label>
+        <label class="f">Condición<select id="cbCond"><option value="">Todas</option><option value="CONTADO">De contado</option><option value="CREDITO">A crédito</option></select></label>
+        <label class="f">Responsable<select id="cbResp"><option value="">Todos</option><option>CHOCOTENTACION</option><option>TIENDAS</option><option>VENDEDOR</option></select></label>
+        <label class="f">Vendedor<select id="cbVend"><option value="">Todos</option></select></label>
+        <label class="f">Despachado desde<input type="date" id="cbDesde"></label>
+        <label class="f">Hasta<input type="date" id="cbHasta"></label>
+        <label class="f">Ordenar por<select id="cbOrden"><option value="vence">Más atrasadas primero</option><option value="monto">Mayor monto</option><option value="nombre">Cliente (A-Z)</option></select></label>
+        <button class="btn" type="button" id="cbLimpiar" hidden>Limpiar filtros</button>
+      </div>
       <div class="kgrid" id="cobroKpis"></div>
       <div class="tbl" id="tablaCobro"></div>
     </section>
