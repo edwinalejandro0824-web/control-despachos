@@ -295,7 +295,7 @@ async function cargarTodo() {
     if (emp) { S.empresa = emp; Object.assign(CONFIG.EMPRESA, { NOMBRE: emp.nombre, MARCA: emp.marca || CONFIG.EMPRESA.MARCA, RIF: emp.rif || "", DIRECCION: emp.direccion || "", TELEFONO: emp.telefono || "" }); }
     S.abonos = abos.map(a => ({ ...a, monto: num(a.monto) })); S.notas = nots;
     S.loaded = true; $("#dot").className = "dot on"; $("#banner").hidden = true;
-    fillSelects(); refrescarUmbs(); render();
+    fillSelects(); refrescarUmbs(); render(); avisoVencidos();
     if (S.full && !S.tasaAuto) { S.tasaAuto = true; tasaAutomatica(); }
   } catch (err) {
     $("#dot").className = "dot off";
@@ -378,6 +378,22 @@ function saldosPendientes() {
     return { ...g, base: t.sub, iva: t.iva, total: t.total, abonado, saldo: Math.max(0, round2(t.total - abonado)), vence: g.lines.map(venceOf).sort()[0], vencido: g.lines.some(isVencido) };
   });
 }
+/** Facturas vencidas de un cliente (para avisar antes de registrar un pedido nuevo). */
+function vencidosDe(cliente) {
+  const k = norm(cliente); if (!k) return null;
+  const v = saldosPendientes().filter(x => norm(x.cliente) === k && x.vencido && x.saldo > 0);
+  if (!v.length) return null;
+  const o = { notas: v.length, USD: 0, BS: 0, dias: 0, nombre: v[0].cliente };
+  v.forEach(x => { o[x.m] += x.saldo; o.dias = Math.max(o.dias, diffDays(today(), x.vence)); });
+  return o;
+}
+const textoVencido = o => `«${o.nombre}» tiene ${o.notas} ${o.notas === 1 ? "factura vencida" : "facturas vencidas"} por ${[o.USD ? money(o.USD, "USD") : "", o.BS ? money(o.BS, "BS") : ""].filter(Boolean).join(" y ")}; la más atrasada lleva ${o.dias} ${o.dias === 1 ? "día" : "días"} de atraso.`;
+function avisoVencidos() {
+  const el = $("#nAvisoVenc"), o = S.loaded ? vencidosDe($("#nCliente").value) : null;
+  el.hidden = !o; el.className = "msg err"; if (o) el.textContent = "⚠ " + textoVencido(o) + " Revise el pago antes de despachar un pedido nuevo.";
+}
+$("#nCliente").addEventListener("input", avisoVencidos);
+$("#nCliente").addEventListener("change", avisoVencidos);
 function vencidos() {
   const g = new Map();
   for (const s of saldosPendientes()) {
@@ -958,6 +974,8 @@ $("#formNuevo").addEventListener("submit", async ev => {
       $("#nCliente").value = sim; filas.forEach(f => f.cliente = sim);
     }
   }
+  const venc = vencidosDe(cliente);
+  if (venc && !confirm(`⚠ ${textoVencido(venc)}\n\n¿Desea registrar este despacho de todos modos?`)) return;
   $("#nSave").disabled = true;
   // Número correlativo: lo asigna la base de datos en el momento de guardar, así dos personas nunca reciben el mismo.
   if (!notaTouched && /^N\/E\d+$/.test(nota)) {
