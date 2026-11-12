@@ -436,6 +436,31 @@ function kpiBlock(rows, m) {
     <div class="kpi k-bad"><span class="lbl">Vencido a la fecha</span><span class="val">${money(ven, m)}</span><span class="sub">${r.filter(isVencido).length} líneas con plazo cumplido</span></div>
   </div>`;
 }
+/** Pagos recibidos en el período (por fecha de pago), sin importar cuándo se despachó la venta. Montos sin IVA. */
+function renderPagos() {
+  const [s, e] = range(), validadas = S.docs.filter(d => d.status !== "DESPACHADO" && d.fecha_pago && d.fecha_pago >= s && d.fecha_pago <= e && d.monto > 0 && !SIN_COBRO.includes(d.responsable));
+  const esAjuste = d => /ajuste/i.test(d.referencia || ""); // regularizaciones del ajuste masivo: no entró dinero
+  const pagos = validadas.filter(d => !esAjuste(d)), ajustes = validadas.filter(esAjuste);
+  const tasaEn = f => { const k = [...S.tasas.keys()].filter(x => x <= f).sort().at(-1); return k ? S.tasas.get(k) : null; };
+  const titulo = S.ptype === "mes" || S.ptype === "mensual" ? monthName(s.slice(0, 7)) : `${fdate(s)}${s === e ? "" : " al " + fdate(e)}`;
+  if (!pagos.length && !ajustes.length) { $("#kpisPagos").innerHTML = `<div class="card"><h3>Pagos recibidos · ${esc(titulo)}</h3>${empty("No se registraron pagos en este período.")}</div>`; return; }
+  const usd = pagos.filter(d => mon(d) === "USD"), bs = pagos.filter(d => mon(d) === "BS");
+  const sum = a => a.reduce((t, d) => t + d.monto, 0);
+  const bsUsd = bs.reduce((t, d) => { const tc = tasaEn(d.fecha_pago); return t + (tc ? d.monto / tc : 0); }, 0), sinTasa = bs.filter(d => !tasaEn(d.fecha_pago)).length;
+  const total = sum(usd) + bsUsd;
+  const delPeriodo = pagos.filter(d => d.fecha >= s && d.fecha <= e), anteriores = pagos.filter(d => d.fecha < s);
+  const eq = d => mon(d) === "USD" ? d.monto : (tasaEn(d.fecha_pago) ? d.monto / tasaEn(d.fecha_pago) : 0);
+  const notas = new Set(pagos.map(d => notaKey(d))).size;
+  $("#kpisPagos").innerHTML = `<div class="curhead usd"><b>PAGOS RECIBIDOS · ${esc(titulo.toUpperCase())}</b><span class="muted" style="font-size:.78rem">${pagos.length} líneas · ${notas} notas / facturas · por fecha de pago, sin IVA</span></div>
+  <div class="kgrid">
+    <div class="kpi k-ok"><span class="lbl">Total cobrado en el período · USD</span><span class="val">${money(total, "USD")}</span><span class="sub">Dólares${bs.length ? " + bolívares convertidos a la tasa BCV de cada pago" : ""}${sinTasa ? ` · ${sinTasa} pagos en Bs. sin tasa` : ""}</span></div>
+    <div class="kpi k-tot"><span class="lbl">Cobrado en USD</span><span class="val">${money(sum(usd), "USD")}</span><span class="sub">${usd.length} líneas</span></div>
+    ${bs.length ? `<div class="kpi k-tot"><span class="lbl">Cobrado en Bs. BCV</span><span class="val">${money(sum(bs), "BS")}</span><span class="sub">≈ ${money(bsUsd, "USD")} · ${bs.length} líneas</span></div>` : ""}
+    <div class="kpi k-pend"><span class="lbl">De ventas del mismo período</span><span class="val">${money(delPeriodo.reduce((t, d) => t + eq(d), 0), "USD")}</span><span class="sub">${delPeriodo.length} líneas despachadas y cobradas en el período</span></div>
+    ${ajustes.length ? `<div class="kpi k-tot"><span class="lbl">Regularizado por ajuste (no es pago)</span><span class="val">${money(ajustes.reduce((t, d) => t + eq(d), 0), "USD")}</span><span class="sub">${ajustes.length} líneas con referencia «AJUSTE»; no se suman a lo cobrado</span></div>` : ""}
+    <div class="kpi k-pend"><span class="lbl">De ventas de períodos anteriores</span><span class="val">${money(anteriores.reduce((t, d) => t + eq(d), 0), "USD")}</span><span class="sub">${anteriores.length} líneas despachadas antes y cobradas ahora</span></div>
+  </div>`;
+}
 /** Resumen de lo que salió sin costo (reposición, obsequio, degustación) y su valor referencial en USD. No suma a ventas ni a cuentas por cobrar. */
 function renderSinCosto(rows) {
   const sc = rows.filter(d => SIN_COBRO.includes(d.responsable));
@@ -451,6 +476,7 @@ function renderSinCosto(rows) {
 }
 function renderReportes() {
   if (!S.loaded) { $("#kpis").innerHTML = empty("Cargando información…"); return; }
+  renderPagos();
   const rows = inPeriod();
   if (!rows.length) { $("#kpis").innerHTML = empty("No hay despachos registrados en este período."); ["#chart", "#porCond", "#porResp", "#porUmb", "#porCli", "#porSin"].forEach(s => $(s).innerHTML = ""); return; }
   $("#kpis").innerHTML = kpiBlock(rows, "USD") + kpiBlock(rows, "BS");
