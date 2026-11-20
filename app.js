@@ -329,7 +329,7 @@ function suscribir() {
 /* ====================== Navegación ====================== */
 function tabsFor() {
   return S.full
-    ? [["reportes", "Reportes"], ["registro", "Registro de despachos"], ["nuevo", "Nuevo despacho"], ["cobranza", "Cuentas por cobrar"], ["comisiones", "Comisiones"], ...(S.admin ? [["admin", "Administración"]] : [])]
+    ? [["reportes", "Reportes"], ["registro", "Registro de despachos"], ["nuevo", "Nuevo despacho"], ["cobranza", "Cuentas por cobrar"], ["clientes", "Clientes"], ["comisiones", "Comisiones"], ...(S.admin ? [["admin", "Administración"]] : [])]
     : [["misventas", "Mis ventas y comisiones"], ["nuevo", "Nuevo despacho"]];
 }
 function buildNav() {
@@ -356,7 +356,7 @@ function render() {
   if (S.full) renderAlert();
   $("#pLabel").textContent = periodLabel(); $("#pFecha").value = S.anchor;
   $$("[data-ptype]").forEach(b => b.setAttribute("aria-pressed", b.dataset.ptype === S.ptype));
-  ({ reportes: renderReportes, registro: renderRegistro, cobranza: renderCobranza, comisiones: renderComisiones, misventas: renderMisVentas, admin: renderAdmin }[S.tab] || (() => {}))();
+  ({ reportes: renderReportes, registro: renderRegistro, cobranza: renderCobranza, clientes: renderClientes, comisiones: renderComisiones, misventas: renderMisVentas, admin: renderAdmin }[S.tab] || (() => {}))();
   refreshFormLists();
 }
 /* ---- Saldos por cobrar: por nota, con IVA y descontando los abonos ---- */
@@ -611,6 +611,47 @@ function tasaHoyHTML(ym) {
       <span class="val">${tp ? "Bs. " + nf4.format(tp.tasa) : "—"}</span>
       <span class="sub">${!tp ? `Se toma la tasa BCV del ${fdate(ft)}` : tp.provisional ? `Provisional (tasa del ${fdate(tp.fecha)}): el ${fdate(ft)} se fija sola con la tasa de ese día` : `Tasa BCV del ${fdate(tp.fecha)}, fijada para el pago`}</span></div>`;
 }
+/* ====================== Clientes: último pedido ====================== */
+function clientesResumen() {
+  const m = new Map();
+  S.clientesRaw.forEach(c => m.set(norm(c.nombre), { nombre: c.nombre, ultimo: "", pedidos: new Set(), lineas: 0, usd: 0, bs: 0, resp: "" }));
+  S.docs.forEach(d => {
+    const k = norm(d.cliente);
+    const o = m.get(k) || (m.set(k, { nombre: d.cliente, ultimo: "", pedidos: new Set(), lineas: 0, usd: 0, bs: 0, resp: "" }), m.get(k));
+    o.pedidos.add(d.fecha + "|" + (d.nota || "")); o.lineas++;
+    if (mon(d) === "BS") o.bs += num(d.monto); else o.usd += num(d.monto);
+    if (d.fecha > o.ultimo) { o.ultimo = d.fecha; o.resp = d.responsable === "VENDEDOR" && d.vendedor_id ? "VENDEDOR · " + vendName(d.vendedor_id) : d.responsable; }
+  });
+  return [...m.values()].map(o => ({ ...o, n: o.pedidos.size, dias: o.ultimo ? Math.max(0, diffDays(today(), o.ultimo)) : null }));
+}
+const haceTxt = n => n == null ? "—" : n === 0 ? "hoy" : n === 1 ? "ayer" : n < 60 ? `hace ${n} días` : `hace ${Math.floor(n / 30)} ${Math.floor(n / 30) === 1 ? "mes" : "meses"} (${n} días)`;
+function clChip(dias) {
+  if (dias == null) return `<span class="chip PORVENCER">SIN PEDIDOS</span>`;
+  return dias <= 30 ? `<span class="chip VALIDADO">ACTIVO</span>` : dias <= 60 ? `<span class="chip PORVENCER">+30 DÍAS</span>` : `<span class="chip VENCIDO">+${dias > 90 ? 90 : 60} DÍAS</span>`;
+}
+function clientesFiltrados() {
+  const q = norm($("#clQ").value), sit = $("#clSit").value, orden = $("#clOrden").value;
+  const pasa = c => (!q || norm(c.nombre).includes(q)) && (!sit || (sit === "ACTIVO" ? c.dias != null && c.dias <= 30 : sit === "NUNCA" ? c.dias == null : c.dias != null && c.dias > +sit));
+  const cmp = { reciente: (a, b) => (a.dias ?? 1e9) - (b.dias ?? 1e9), antiguo: (a, b) => (b.dias ?? 1e9) - (a.dias ?? 1e9), total: (a, b) => (b.usd - a.usd) || (b.bs - a.bs), pedidos: (a, b) => b.n - a.n, nombre: (a, b) => a.nombre.localeCompare(b.nombre, "es") }[orden];
+  return clientesResumen().filter(pasa).sort((a, b) => cmp(a, b) || a.nombre.localeCompare(b.nombre, "es"));
+}
+function clLimpiar() { $("#clQ").value = ""; $("#clSit").value = ""; $("#clOrden").value = "reciente"; renderClientes(); }
+["#clQ", "#clSit", "#clOrden"].forEach(x => $(x).addEventListener("input", () => renderClientes()));
+$("#clLimpiar").addEventListener("click", clLimpiar);
+function renderClientes() {
+  if (!S.loaded) { $("#tablaClientes").innerHTML = empty("Cargando información…"); return; }
+  const todos = clientesResumen(), lista = clientesFiltrados();
+  const act = todos.filter(c => c.dias != null && c.dias <= 30).length, inact = todos.filter(c => c.dias != null && c.dias > 30).length, nunca = todos.filter(c => c.dias == null).length;
+  $("#clLimpiar").hidden = !($("#clQ").value || $("#clSit").value || $("#clOrden").value !== "reciente");
+  $("#clKpis").innerHTML = `<div class="kpi k-tot"><span class="lbl">Clientes</span><span class="val">${todos.length}</span><span class="sub">en el sistema</span></div>
+    <div class="kpi k-ok"><span class="lbl">Activos</span><span class="val">${act}</span><span class="sub">pidieron en los últimos 30 días</span></div>
+    <div class="kpi k-pend"><span class="lbl">Sin pedir hace +30 días</span><span class="val">${inact}</span><span class="sub">candidatos para llamar</span></div>
+    <div class="kpi"><span class="lbl">Sin ningún pedido</span><span class="val">${nunca}</span><span class="sub">registrados, sin despachos</span></div>`;
+  $("#tablaClientes").innerHTML = lista.length ? `<table><thead><tr><th>Cliente</th><th>Último pedido</th><th>Tiempo sin pedir</th><th></th><th class="n">Pedidos</th><th class="n">Total USD</th><th class="n">Total Bs.</th><th>Último responsable</th></tr></thead><tbody>
+    ${lista.map(c => `<tr><td><b>${esc(c.nombre)}</b></td><td class="num" style="text-align:left">${c.ultimo ? fdate(c.ultimo) : "—"}</td><td>${haceTxt(c.dias)}</td><td>${clChip(c.dias)}</td><td class="n">${c.n}</td><td class="n">${c.usd ? nf.format(c.usd) : "—"}</td><td class="n">${c.bs ? nf.format(c.bs) : "—"}</td><td>${esc(c.resp) || "—"}</td></tr>`).join("")}
+    </tbody></table><p class="muted" style="font-size:.8rem">${lista.length} ${lista.length === 1 ? "cliente" : "clientes"}. Los totales suman todos los despachos del cliente, en USD y en Bs. por separado.</p>` : empty("Ningún cliente con estos filtros.");
+}
+
 let tasaManual = false;
 function renderComisiones() {
   $("#cPct").textContent = PCT + "%";
@@ -660,6 +701,40 @@ function renderComisiones() {
     ${hist.map(p => `<tr><td>${monthName(p.mes.slice(0, 7))}</td><td>${esc(vendName(p.vendedor_id))}</td><td class="n">${p.lineas}</td><td class="n">${nf.format(p.base_usd)}</td><td class="n">${nf.format(p.comision_usd)}</td><td class="n">${nf4.format(p.tasa_bcv)}<span class="sub">${fdate(p.fecha_tasa)}</span></td><td class="n"><b>${nf.format(p.comision_bs)}</b></td><td>${fdate(p.pagado_en)}</td><td>${esc(p.referencia_pago) || "—"}</td><td>${S.admin ? `<button class="btn small danger" data-anular="${p.id}">Anular</button>` : ""}</td></tr>`).join("")}
     </tbody></table>` : empty("Todavía no se ha pagado ninguna comisión.");
 }
+/** PDF de las comisiones del mes seleccionado: resumen por vendedor y el detalle de ventas de cada uno. */
+$("#cPdf").addEventListener("click", () => {
+  if (!S.loaded) return toast("Espere a que cargue la información.");
+  const ym = $("#cMes").value || today().slice(0, 7), tasa = num($("#cTasa").value), ini = monthIni(ym);
+  const vids = new Set([...S.vendedores.map(v => v.id), ...S.docs.filter(d => d.vendedor_id).map(d => d.vendedor_id)]);
+  const resumen = [], detalle = []; let totBase = 0, totCom = 0, totBs = 0, hayPend = false, sinTasa = false;
+  const detTabla = (titulo, rows) => ({ titulo, columnas: [{ t: "Cobrado el" }, { t: "Despachado" }, { t: "Cliente" }, { t: "N° nota" }, { t: "Monto", n: true }],
+    filas: rows.sort((a, b) => (a.fecha_pago || "").localeCompare(b.fecha_pago || "")).map(d => [fdate(d.fecha_pago), fdate(d.fecha), esc(d.cliente), esc(d.nota), `${mon(d) === "BS" ? "Bs." : "USD"} ${nf.format(d.monto)}`]), pie: null });
+  [...vids].forEach(vid => {
+    const lineas = lineasComision(vid, ym), pagadas = S.comisiones.filter(c => c.vendedor_id === vid && c.mes === ini);
+    if (lineas.length) {
+      const c = calcComision(lineas, tasa); hayPend = true;
+      if (c.comBs == null) sinTasa = true; else { totBase += c.base; totCom += c.comUsd; totBs += c.comBs; }
+      resumen.push([esc(vendName(vid)), c.n, c.base == null ? "—" : nf.format(c.base), c.comUsd == null ? "—" : nf.format(c.comUsd), c.tasa ? nf4.format(c.tasa) : "—", c.comBs == null ? "Falta la tasa" : nf.format(c.comBs), "Por pagar"]);
+      detalle.push(detTabla(`${vendName(vid)} · ventas cobradas (por pagar)`, [...lineas]));
+    }
+    pagadas.forEach(p => {
+      totBase += num(p.base_usd); totCom += num(p.comision_usd); totBs += num(p.comision_bs);
+      resumen.push([esc(vendName(vid)), p.lineas, nf.format(p.base_usd), nf.format(p.comision_usd), nf4.format(p.tasa_bcv), nf.format(p.comision_bs), `Pagada el ${fdate(p.pagado_en)}${p.referencia_pago ? " · Ref. " + esc(p.referencia_pago) : ""}`]);
+      const ls = S.docs.filter(d => d.comision_id === p.id);
+      if (ls.length) detalle.push(detTabla(`${vendName(vid)} · ventas de la comisión pagada el ${fdate(p.pagado_en)}`, [...ls]));
+    });
+  });
+  if (!resumen.length) return toast(`No hay comisiones de ${monthName(ym)} para descargar.`);
+  const kpis = [{ moneda: "USD", items: [{ lbl: "Total cobrado en el mes (base)", val: money(totBase, "USD") }, { lbl: `Comisión ${PCT}%`, val: money(totCom, "USD"), cls: "ok" }] },
+    { moneda: "BS", items: [{ lbl: "Comisión total en bolívares", val: sinTasa ? "Falta la tasa BCV" : money(totBs, "BS"), cls: "ok" }, { lbl: `Tasa BCV del ${fdate(fechaTasa(ym))}`, val: tasa ? "Bs. " + nf4.format(tasa) : "—" }] }];
+  const html = Documentos.reporteHTML({
+    titulo: `Comisiones de vendedores · ${monthName(ym)}`, periodo: `Ventas cobradas del ${fdate(ini)} al ${fdate(monthFin(ym))}`, usuario: S.perfil.nombre, kpis,
+    tablas: [{ titulo: "Resumen por vendedor", columnas: [{ t: "Vendedor" }, { t: "Ventas", n: true }, { t: "Base USD", n: true }, { t: `Comisión ${PCT}% USD`, n: true }, { t: "Tasa BCV", n: true }, { t: "Comisión Bs.", n: true }, { t: "Estado" }], filas: resumen, pie: null }, ...detalle],
+    nota: `La comisión es el ${PCT}% de las ventas cobradas dentro del mes (status VALIDADO con fecha de pago en el mes). Se calcula en USD y se paga en bolívares a la tasa BCV indicada.${hayPend ? " Las filas «Por pagar» aún no tienen el pago registrado." : ""}`
+  });
+  Documentos.abrir(html, { titulo: `Comisiones · ${monthName(ym)}`, archivo: `Comisiones ${ym}.pdf` });
+  logEvento("exportacion", { formato: "pdf", tipo: "comisiones", mes: ym, registros: resumen.length });
+});
 async function guardarTasa(fecha, tasa, fuente) {
   if (!(tasa > 0)) { toast("Indique una tasa válida."); return false; }
   const { error } = await sb.from("tasas_bcv").upsert({ fecha, tasa, fuente: fuente || "Manual" });

@@ -216,6 +216,22 @@
       <div class="tbl" id="tablaCobro"></div>
     </section>
 
+    <!-- CLIENTES -->
+    <section role="tabpanel" id="p-clientes" hidden>
+      <div>
+        <h2>Clientes</h2>
+        <p class="lead">Todos los clientes con la fecha de su último pedido y cuánto tiempo lleva sin pedir. El pedido se cuenta por la fecha de despacho, de cualquier status. Sirve para ver quién dejó de comprar y a quién llamar.</p>
+      </div>
+      <div class="filters" id="clFiltros">
+        <label class="f grow">Buscar<input id="clQ" type="search" placeholder="Nombre del cliente" autocomplete="off"></label>
+        <label class="f">Situación<select id="clSit"><option value="">Todos</option><option value="ACTIVO">Pidieron en los últimos 30 días</option><option value="30">Sin pedir hace más de 30 días</option><option value="60">Sin pedir hace más de 60 días</option><option value="90">Sin pedir hace más de 90 días</option><option value="NUNCA">Sin ningún pedido</option></select></label>
+        <label class="f">Ordenar por<select id="clOrden"><option value="reciente">Último pedido (más reciente)</option><option value="antiguo">Más tiempo sin pedir</option><option value="total">Mayor total comprado</option><option value="pedidos">Más pedidos</option><option value="nombre">Cliente (A-Z)</option></select></label>
+        <button class="btn" type="button" id="clLimpiar" hidden>Limpiar filtros</button>
+      </div>
+      <div class="kgrid" id="clKpis"></div>
+      <div class="tbl" id="tablaClientes"></div>
+    </section>
+
     <!-- COMISIONES (administrador) -->
     <section role="tabpanel" id="p-comisiones" hidden>
       <div>
@@ -227,6 +243,7 @@
         <label class="f">Mes cobrado<input type="month" id="cMes"></label>
         <label class="f" style="flex:0 1 280px"><span>Tasa BCV del <span id="cFechaTasaTxt"></span> (Bs. por USD) <span class="req">*</span></span><input type="number" step="0.0001" min="0" id="cTasa" inputmode="decimal"></label>
         <button class="btn" type="button" id="cGuardarTasa">Guardar tasa</button>
+        <button class="btn primary" type="button" id="cPdf">Descargar PDF</button>
         <span class="muted" id="cTasaInfo" style="font-size:.8rem;flex:1 1 260px"></span>
       </div>
       <div id="cAvisos"></div>
